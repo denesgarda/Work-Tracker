@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<title>Work Tracker</title>
+<style>
+  :root {
+    --bg: #1c1b19;
+    --surface: #24221f;
+    --surface-2: #2c2a26;
+    --text: #f0ede6;
+    --muted: #9b958a;
+    --line: #3a3733;
+    --on: #6a9c5f;
+    --on-dim: #3f5b3a;
+    --off: #c97a3d;
+    --warn: #c0553d;
+    --mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px 48px;
+  }
+
+  main { width: 100%; max-width: 420px; }
+
+  h1 {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0 0 18px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px 20px;
+  }
+
+  .punch { position: relative; padding-top: 26px; margin-bottom: 16px; }
+  .punch::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background-image: repeating-linear-gradient(to right, var(--line) 0 6px, transparent 6px 12px);
+  }
+  .punch::after {
+    content: '';
+    position: absolute;
+    top: -1px; left: 50%;
+    transform: translateX(-50%);
+    width: 34px; height: 6px;
+    background: var(--bg);
+    border-radius: 0 0 6px 6px;
+    border: 1px solid var(--line);
+    border-top: none;
+  }
+
+  .status-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
+  .dot.on { background: var(--on); box-shadow: 0 0 6px var(--on); }
+
+  .elapsed {
+    font-family: var(--mono);
+    font-size: 42px;
+    font-weight: 500;
+    margin-bottom: 20px;
+    color: var(--text);
+  }
+  .elapsed.idle { color: var(--muted); }
+
+  .punch-btn {
+    width: 100%;
+    padding: 18px;
+    border-radius: 10px;
+    border: none;
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #16150f;
+  }
+  .punch-btn:active { transform: scale(0.98); }
+  .punch-btn.in { background: var(--off); }
+  .punch-btn.out { background: var(--on); }
+  .punch-btn:disabled { opacity: 0.5; cursor: default; }
+
+  section.block { margin-top: 18px; }
+
+  .block-header {
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; padding: 4px 2px;
+  }
+  .block-header h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); font-weight: 600; margin: 0;
+  }
+  .chevron { color: var(--muted); font-size: 12px; transition: transform 0.15s ease; }
+  .chevron.open { transform: rotate(90deg); }
+
+  .collapsible { display: none; margin-top: 12px; }
+  .collapsible.open { display: block; }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  label:first-child { margin-top: 0; }
+
+  input, textarea {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 11px 12px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--muted); }
+
+  .submit-btn {
+    width: 100%;
+    margin-top: 16px;
+    padding: 13px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .submit-btn:disabled { opacity: 0.5; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tab {
+    flex: 1; padding: 9px 4px; border-radius: 7px;
+    border: 1px solid var(--line); background: transparent;
+    color: var(--muted); font-family: var(--sans); font-size: 12.5px; cursor: pointer;
+  }
+  .tab.active { background: var(--surface-2); color: var(--text); border-color: var(--muted); }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { background: var(--surface-2); border-radius: 10px; padding: 14px; }
+  .stat .label {
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;
+  }
+  .stat .value { font-family: var(--mono); font-size: 20px; }
+  .stat.rate { grid-column: 1 / -1; background: var(--on-dim); }
+  .stat.rate .value { font-size: 28px; }
+
+  .msg {
+    font-size: 13px; padding: 10px 12px; border-radius: 8px;
+    margin-top: 12px; display: none;
+  }
+  .msg.show { display: block; }
+  .msg.error { background: rgba(192, 85, 61, 0.15); color: #e08668; }
+  .msg.success { background: rgba(106, 156, 95, 0.15); color: #8fc180; }
+
+  .footer-note {
+    text-align: center; font-size: 11.5px; color: var(--muted);
+    margin-top: 22px; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Work Tracker</h1>
+
+  <div class="card">
+    <div class="punch">
+      <div class="status-row">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusLabel">Loading…</span>
+      </div>
+      <div class="elapsed idle" id="elapsed">00:00:00</div>
+    </div>
+    <button class="punch-btn in" id="punchBtn" disabled>Clock In</button>
+    <div class="msg" id="clockMsg"></div>
+  </div>
+
+  <section class="block">
+    <div class="block-header" id="stubHeader">
+      <h2>Log a pay stub</h2>
+      <span class="chevron" id="stubChevron">▸</span>
+    </div>
+    <div class="collapsible card" id="stubPanel">
+      <label for="paymentDate">Payment date</label>
+      <input type="date" id="paymentDate">
+      <label for="amount">Amount ($)</label>
+      <input type="number" id="amount" inputmode="decimal" placeholder="0.00" step="0.01">
+      <label for="notes">Notes (optional)</label>
+      <input type="text" id="notes" placeholder="e.g. includes tips">
+      <button class="submit-btn" id="submitStub">Add pay stub</button>
+      <div class="msg" id="stubMsg"></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-header"><h2>Summary</h2></div>
+    <div class="card" style="margin-top:12px;">
+      <div class="tabs">
+        <button class="tab active" data-range="month">Last month</button>
+        <button class="tab" data-range="year">Last year</button>
+        <button class="tab" data-range="all">All time</button>
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><div class="label">Hours</div><div class="value" id="statHours">–</div></div>
+        <div class="stat"><div class="label">Pay</div><div class="value" id="statPay">–</div></div>
+        <div class="stat rate"><div class="label">Effective rate</div><div class="value" id="statRate">–</div></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="footer-note">Data lives in your Google Sheet. This page is just the punch clock.</p>
+</main>
+
+<script>
+  let clockedIn = false;
+  let activeStart = null;
+  let tickTimer = null;
+  let currentRange = 'month';
+
+  const $ = (id) => document.getElementById(id);
+
+  function runServer(fnName, ...args) {
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler((err) => reject(new Error(err.message || String(err))))
+        [fnName](...args);
+    });
+  }
+
+  function fmtMoney(n) {
+    if (n === null || n === undefined) return '–';
+    return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function fmtHours(n) {
+    if (n === null || n === undefined) return '–';
+    return n.toLocaleString(undefined, { maximumFractionDigits: 1 }) + 'h';
+  }
+  function fmtElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const h = String(Math.floor(total / 3600)).padStart(2, '0');
+    const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+    const s = String(total % 60).padStart(2, '0');
+    return h + ':' + m + ':' + s;
+  }
+  function showMsg(el, text, type) {
+    el.textContent = text;
+    el.className = 'msg show ' + type;
+    setTimeout(() => { el.className = 'msg'; }, 4000);
+  }
+
+  async function refreshStatus() {
+    try {
+      const data = await runServer('getStatus');
+      if (data.error) throw new Error(data.error);
+      clockedIn = data.clockedIn;
+      activeStart = data.start ? new Date(data.start) : null;
+      updatePunchUI();
+    } catch (e) {
+      $('statusLabel').textContent = 'Error loading status';
+      showMsg($('clockMsg'), e.message, 'error');
+    }
+  }
+
+  function updatePunchUI() {
+    const btn = $('punchBtn');
+    const dot = $('statusDot');
+    const label = $('statusLabel');
+    const elapsedEl = $('elapsed');
+
+    btn.disabled = false;
+    clearInterval(tickTimer);
+
+    if (clockedIn) {
+      dot.classList.add('on');
+      label.textContent = 'Clocked in';
+      btn.textContent = 'Clock Out';
+      btn.className = 'punch-btn out';
+      elapsedEl.classList.remove('idle');
+      tickTimer = setInterval(() => {
+        elapsedEl.textContent = fmtElapsed(Date.now() - activeStart.getTime());
+      }, 1000);
+      elapsedEl.textContent = fmtElapsed(Date.now() - activeStart.getTime());
+    } else {
+      dot.classList.remove('on');
+      label.textContent = 'Clocked out';
+      btn.textContent = 'Clock In';
+      btn.className = 'punch-btn in';
+      elapsedEl.classList.add('idle');
+      elapsedEl.textContent = '00:00:00';
+    }
+  }
+
+  $('punchBtn').addEventListener('click', async () => {
+    $('punchBtn').disabled = true;
+    const fnName = clockedIn ? 'clockOut' : 'clockIn';
+    try {
+      const data = await runServer(fnName);
+      if (data.error) throw new Error(data.error);
+      if (fnName === 'clockIn') {
+        showMsg($('clockMsg'), 'Clocked in.', 'success');
+      } else {
+        showMsg($('clockMsg'), 'Clocked out — ' + data.hours.toFixed(2) + 'h logged.', 'success');
+        refreshSummary();
+      }
+      await refreshStatus();
+    } catch (e) {
+      showMsg($('clockMsg'), 'Failed: ' + e.message, 'error');
+      $('punchBtn').disabled = false;
+    }
+  });
+
+  $('stubHeader').addEventListener('click', () => {
+    $('stubPanel').classList.toggle('open');
+    $('stubChevron').classList.toggle('open');
+  });
+
+  $('submitStub').addEventListener('click', async () => {
+    const paymentDate = $('paymentDate').value;
+    const amount = $('amount').value;
+    const notes = $('notes').value;
+    if (!amount) { showMsg($('stubMsg'), 'Enter an amount.', 'error'); return; }
+
+    $('submitStub').disabled = true;
+    try {
+      const data = await runServer('addPayStub', paymentDate, amount, notes);
+      if (data.error) throw new Error(data.error);
+      showMsg($('stubMsg'), 'Pay stub added.', 'success');
+      $('amount').value = '';
+      $('notes').value = '';
+      refreshSummary();
+    } catch (e) {
+      showMsg($('stubMsg'), 'Failed: ' + e.message, 'error');
+    } finally {
+      $('submitStub').disabled = false;
+    }
+  });
+
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentRange = tab.dataset.range;
+      refreshSummary();
+    });
+  });
+
+  async function refreshSummary() {
+    try {
+      const data = await runServer('getSummary', currentRange);
+      if (data.error) throw new Error(data.error);
+      $('statHours').textContent = fmtHours(data.totalHours);
+      $('statPay').textContent = fmtMoney(data.totalPay);
+      $('statRate').textContent = data.effectiveRate !== null ? fmtMoney(data.effectiveRate) + '/hr' : '–';
+    } catch (e) {
+      $('statHours').textContent = '–';
+      $('statPay').textContent = '–';
+      $('statRate').textContent = '–';
+    }
+  }
+
+  refreshStatus();
+  refreshSummary();
+</script>
+</body>
+</html>
