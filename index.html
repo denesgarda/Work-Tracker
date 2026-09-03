@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<base target="_top">
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <title>Work Tracker</title>
 <style>
   :root {
@@ -49,6 +49,20 @@
     padding: 22px 20px;
   }
 
+  /* --- Lock screen --- */
+  #lockScreen { display: none; }
+  #lockScreen.show { display: block; }
+  #app { display: none; }
+  #app.show { display: block; }
+
+  #lockScreen p {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+    margin: 0 0 14px;
+  }
+
+  /* --- Punch card --- */
   .punch { position: relative; padding-top: 26px; margin-bottom: 16px; }
   .punch::before {
     content: '';
@@ -180,76 +194,92 @@
     text-align: center; font-size: 11.5px; color: var(--muted);
     margin-top: 22px; line-height: 1.5;
   }
+
+  .footer-note button {
+    background: none; border: none; color: var(--muted);
+    text-decoration: underline; font-size: 11.5px; cursor: pointer; padding: 0;
+    font-family: var(--sans);
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>Work Tracker</h1>
 
-  <div class="card">
-    <div class="punch">
-      <div class="status-row">
-        <span class="dot" id="statusDot"></span>
-        <span id="statusLabel">Loading…</span>
-      </div>
-      <div class="elapsed idle" id="elapsed">00:00:00</div>
-    </div>
-    <button class="punch-btn in" id="punchBtn" disabled>Clock In</button>
-    <div class="msg" id="clockMsg"></div>
+  <!-- Lock screen: shown until a valid access code is stored -->
+  <div id="lockScreen" class="card">
+    <p>Enter your access code to unlock this device. It's saved locally here only — never sent anywhere except to your own script.</p>
+    <label for="codeInput">Access code</label>
+    <input type="password" id="codeInput" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="submit-btn" id="unlockBtn">Unlock</button>
+    <div class="msg" id="lockMsg"></div>
   </div>
 
-  <section class="block">
-    <div class="block-header" id="stubHeader">
-      <h2>Log a pay stub</h2>
-      <span class="chevron" id="stubChevron">▸</span>
-    </div>
-    <div class="collapsible card" id="stubPanel">
-      <label for="paymentDate">Payment date</label>
-      <input type="date" id="paymentDate">
-      <label for="amount">Amount ($)</label>
-      <input type="number" id="amount" inputmode="decimal" placeholder="0.00" step="0.01">
-      <label for="notes">Notes (optional)</label>
-      <input type="text" id="notes" placeholder="e.g. includes tips">
-      <button class="submit-btn" id="submitStub">Add pay stub</button>
-      <div class="msg" id="stubMsg"></div>
-    </div>
-  </section>
-
-  <section class="block">
-    <div class="block-header"><h2>Summary</h2></div>
-    <div class="card" style="margin-top:12px;">
-      <div class="tabs">
-        <button class="tab active" data-range="month">Last month</button>
-        <button class="tab" data-range="year">Last year</button>
-        <button class="tab" data-range="all">All time</button>
+  <!-- Main app -->
+  <div id="app">
+    <div class="card">
+      <div class="punch">
+        <div class="status-row">
+          <span class="dot" id="statusDot"></span>
+          <span id="statusLabel">Loading…</span>
+        </div>
+        <div class="elapsed idle" id="elapsed">00:00:00</div>
       </div>
-      <div class="stat-grid">
-        <div class="stat"><div class="label">Hours</div><div class="value" id="statHours">–</div></div>
-        <div class="stat"><div class="label">Pay</div><div class="value" id="statPay">–</div></div>
-        <div class="stat rate"><div class="label">Effective rate</div><div class="value" id="statRate">–</div></div>
-      </div>
+      <button class="punch-btn in" id="punchBtn" disabled>Clock In</button>
+      <div class="msg" id="clockMsg"></div>
     </div>
-  </section>
 
-  <p class="footer-note">Data lives in your Google Sheet. This page is just the punch clock.</p>
+    <section class="block">
+      <div class="block-header" id="stubHeader">
+        <h2>Log a pay stub</h2>
+        <span class="chevron" id="stubChevron">▸</span>
+      </div>
+      <div class="collapsible card" id="stubPanel">
+        <label for="paymentDate">Payment date</label>
+        <input type="date" id="paymentDate">
+        <label for="amount">Amount ($)</label>
+        <input type="number" id="amount" inputmode="decimal" placeholder="0.00" step="0.01">
+        <label for="notes">Notes (optional)</label>
+        <input type="text" id="notes" placeholder="e.g. includes tips">
+        <button class="submit-btn" id="submitStub">Add pay stub</button>
+        <div class="msg" id="stubMsg"></div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="block-header"><h2>Summary</h2></div>
+      <div class="card" style="margin-top:12px;">
+        <div class="tabs">
+          <button class="tab active" data-range="month">Last month</button>
+          <button class="tab" data-range="year">Last year</button>
+          <button class="tab" data-range="all">All time</button>
+        </div>
+        <div class="stat-grid">
+          <div class="stat"><div class="label">Hours</div><div class="value" id="statHours">–</div></div>
+          <div class="stat"><div class="label">Pay</div><div class="value" id="statPay">–</div></div>
+          <div class="stat rate"><div class="label">Effective rate</div><div class="value" id="statRate">–</div></div>
+        </div>
+      </div>
+    </section>
+
+    <p class="footer-note">
+      Data lives in your Google Sheet.
+      <button id="lockOutBtn">Lock this device</button>
+    </p>
+  </div>
 </main>
 
 <script>
+  // Set this once to your deployed Apps Script Web App URL (ends in /exec).
+  const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwkLhAaj2SuL2BRoV9KzxjVRXsE2J-NEd8Rhm8KwF9sApK2T315DRZzuLmYF5_aNn-R/exec';
+
+  let accessToken = localStorage.getItem('workTrackerToken') || '';
   let clockedIn = false;
   let activeStart = null;
   let tickTimer = null;
   let currentRange = 'month';
 
   const $ = (id) => document.getElementById(id);
-
-  function runServer(fnName, ...args) {
-    return new Promise((resolve, reject) => {
-      google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler((err) => reject(new Error(err.message || String(err))))
-        [fnName](...args);
-    });
-  }
 
   function fmtMoney(n) {
     if (n === null || n === undefined) return '–';
@@ -272,16 +302,60 @@
     setTimeout(() => { el.className = 'msg'; }, 4000);
   }
 
+  // All requests are GET with the token in the query string — this is the
+  // pattern Apps Script Web Apps support most reliably cross-origin
+  // (avoids CORS preflight issues that POST can run into from Safari).
+  async function callApi(action, params) {
+    const qs = new URLSearchParams({ action, token: accessToken, ...(params || {}) });
+    const res = await fetch(SCRIPT_URL + '?' + qs.toString());
+    const data = await res.json();
+    if (data.error === 'Unauthorized') {
+      lockDevice('That code was rejected. Check it and try again.');
+      throw new Error('Unauthorized');
+    }
+    if (data.error) throw new Error(data.error);
+    return data;
+  }
+
+  function lockDevice(message) {
+    localStorage.removeItem('workTrackerToken');
+    accessToken = '';
+    $('app').classList.remove('show');
+    $('lockScreen').classList.add('show');
+    if (message) showMsg($('lockMsg'), message, 'error');
+  }
+
+  $('unlockBtn').addEventListener('click', async () => {
+    const code = $('codeInput').value.trim();
+    if (!code) return;
+    accessToken = code;
+    $('unlockBtn').disabled = true;
+    try {
+      await callApi('status');
+      localStorage.setItem('workTrackerToken', accessToken);
+      $('lockScreen').classList.remove('show');
+      $('app').classList.add('show');
+      init();
+    } catch (e) {
+      // callApi already re-locks and shows a message on Unauthorized
+      if (e.message !== 'Unauthorized') {
+        showMsg($('lockMsg'), 'Could not reach the server: ' + e.message, 'error');
+      }
+    } finally {
+      $('unlockBtn').disabled = false;
+    }
+  });
+
+  $('lockOutBtn').addEventListener('click', () => lockDevice());
+
   async function refreshStatus() {
     try {
-      const data = await runServer('getStatus');
-      if (data.error) throw new Error(data.error);
+      const data = await callApi('status');
       clockedIn = data.clockedIn;
       activeStart = data.start ? new Date(data.start) : null;
       updatePunchUI();
     } catch (e) {
       $('statusLabel').textContent = 'Error loading status';
-      showMsg($('clockMsg'), e.message, 'error');
     }
   }
 
@@ -316,11 +390,10 @@
 
   $('punchBtn').addEventListener('click', async () => {
     $('punchBtn').disabled = true;
-    const fnName = clockedIn ? 'clockOut' : 'clockIn';
+    const action = clockedIn ? 'clockOut' : 'clockIn';
     try {
-      const data = await runServer(fnName);
-      if (data.error) throw new Error(data.error);
-      if (fnName === 'clockIn') {
+      const data = await callApi(action);
+      if (action === 'clockIn') {
         showMsg($('clockMsg'), 'Clocked in.', 'success');
       } else {
         showMsg($('clockMsg'), 'Clocked out — ' + data.hours.toFixed(2) + 'h logged.', 'success');
@@ -328,7 +401,9 @@
       }
       await refreshStatus();
     } catch (e) {
-      showMsg($('clockMsg'), 'Failed: ' + e.message, 'error');
+      if (e.message !== 'Unauthorized') {
+        showMsg($('clockMsg'), 'Failed: ' + e.message, 'error');
+      }
       $('punchBtn').disabled = false;
     }
   });
@@ -346,14 +421,15 @@
 
     $('submitStub').disabled = true;
     try {
-      const data = await runServer('addPayStub', paymentDate, amount, notes);
-      if (data.error) throw new Error(data.error);
+      await callApi('addPayStub', { paymentDate, amount, notes });
       showMsg($('stubMsg'), 'Pay stub added.', 'success');
       $('amount').value = '';
       $('notes').value = '';
       refreshSummary();
     } catch (e) {
-      showMsg($('stubMsg'), 'Failed: ' + e.message, 'error');
+      if (e.message !== 'Unauthorized') {
+        showMsg($('stubMsg'), 'Failed: ' + e.message, 'error');
+      }
     } finally {
       $('submitStub').disabled = false;
     }
@@ -370,8 +446,7 @@
 
   async function refreshSummary() {
     try {
-      const data = await runServer('getSummary', currentRange);
-      if (data.error) throw new Error(data.error);
+      const data = await callApi('summary', { range: currentRange });
       $('statHours').textContent = fmtHours(data.totalHours);
       $('statPay').textContent = fmtMoney(data.totalPay);
       $('statRate').textContent = data.effectiveRate !== null ? fmtMoney(data.effectiveRate) + '/hr' : '–';
@@ -382,8 +457,18 @@
     }
   }
 
-  refreshStatus();
-  refreshSummary();
+  function init() {
+    refreshStatus();
+    refreshSummary();
+  }
+
+  // Boot: skip the lock screen if we already have a stored code.
+  if (accessToken) {
+    $('app').classList.add('show');
+    init();
+  } else {
+    $('lockScreen').classList.add('show');
+  }
 </script>
 </body>
 </html>
