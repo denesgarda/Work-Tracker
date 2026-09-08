@@ -28,7 +28,7 @@
   "vars": {
     // Set to your Access team domain + application AUD to enforce auth.
     // Left blank locally so `wrangler dev` works without Zero Trust.
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": ""
+    "ACCESS_TEAM_DOMAIN": "denesgarda.cloudflareaccess.com",
+    "ACCESS_AUD": "09b7403f2b42ab06d50cd159168d0a2da90830ad8abdb2bcdfbcf37c5829e56c"
   }
 }
