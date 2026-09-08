@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1c1b19">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Work Tracker</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+
+<div id="boot" class="boot">Loading…</div>
+
+<div id="shell" hidden>
+  <header class="topbar">
+    <h1>Work Tracker</h1>
+    <button id="syncPill" class="pill" type="button" title="Sync status">
+      <span class="pip"></span><span id="syncText">Connecting</span>
+    </button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab is-active" data-view="clock"    role="tab">Clock</button>
+    <button class="tab"           data-view="history"  role="tab">History</button>
+    <button class="tab"           data-view="insights" role="tab">Insights</button>
+    <button class="tab"           data-view="setup"    role="tab">Setup</button>
+  </nav>
+
+  <main id="views">
+    <!-- ── Clock ───────────────────────────────────────────────── -->
+    <section class="view is-active" data-view="clock">
+      <div class="card punchcard">
+        <div class="jobrow" id="jobRow"></div>
+
+        <div class="tearline"></div>
+
+        <div class="statusline">
+          <span class="pip" id="clockPip"></span>
+          <span id="clockStatus">Clocked out</span>
+          <span class="statusline-since" id="clockSince"></span>
+        </div>
+
+        <div class="elapsed is-idle" id="elapsed">0:00:00</div>
+        <div class="elapsed-sub" id="elapsedSub">Not on the clock</div>
+
+        <div class="punch-actions">
+          <button class="btn btn-primary" id="punchBtn" type="button">Clock in</button>
+          <button class="btn btn-ghost" id="breakBtn" type="button" hidden>Take a break</button>
+        </div>
+      </div>
+
+      <div class="tiles" id="todayTiles"></div>
+
+      <div class="card">
+        <h2 class="card-title">Recent shifts</h2>
+        <div id="recentShifts" class="ledger"></div>
+      </div>
+    </section>
+
+    <!-- ── History ─────────────────────────────────────────────── -->
+    <section class="view" data-view="history">
+      <div class="toolbar">
+        <select id="historyJob" class="select" aria-label="Filter by job"></select>
+        <div class="seg" id="historyKind">
+          <button class="seg-btn is-active" data-kind="all">All</button>
+          <button class="seg-btn" data-kind="shift">Shifts</button>
+          <button class="seg-btn" data-kind="payment">Deposits</button>
+        </div>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-quiet" id="addShiftBtn" type="button">Add a past shift</button>
+        <button class="btn btn-quiet" id="addPaymentBtn" type="button">Log a deposit</button>
+      </div>
+      <div id="historyList" class="ledger ledger-full"></div>
+      <button class="btn btn-quiet btn-block" id="historyMore" type="button" style="margin-top:10px" hidden></button>
+    </section>
+
+    <!-- ── Insights ────────────────────────────────────────────── -->
+    <section class="view" data-view="insights">
+      <div class="toolbar">
+        <select id="insightsJob" class="select" aria-label="Filter by job"></select>
+        <select id="insightsRange" class="select" aria-label="Time window"></select>
+      </div>
+      <div class="tiles tiles-lead" id="insightTiles"></div>
+      <div id="charts"></div>
+    </section>
+
+    <!-- ── Setup ───────────────────────────────────────────────── -->
+    <section class="view" data-view="setup">
+      <div class="card">
+        <h2 class="card-title">Jobs</h2>
+        <p class="card-note">Each job keeps its own hours and deposits, so rates never mix between them.</p>
+        <div id="jobList" class="joblist"></div>
+        <button class="btn btn-quiet" id="addJobBtn" type="button">Add a job</button>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Your data</h2>
+        <p class="card-note">Everything lives in your own Cloudflare database. Take a copy whenever you like.</p>
+        <div class="row-actions">
+          <button class="btn btn-quiet" id="exportCsvBtn" type="button">Download CSV</button>
+          <button class="btn btn-quiet" id="exportJsonBtn" type="button">Download JSON</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">How the rate is worked out</h2>
+        <p class="card-note">
+          Deposits arrive weeks after the work that earned them, and they arrive in
+          lumps covering several jobs at once. Rather than guess which hours a
+          deposit belongs to, this adds up money and hours over the same window and
+          divides. Over a long enough window the lag washes out — which is why
+          weekly views show hours and income but no rate, and why 90 days is the
+          window worth trusting.
+        </p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true">
+    <div class="sheet-head">
+      <h2 id="sheetTitle">Edit</h2>
+      <button class="icon-btn" data-close type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

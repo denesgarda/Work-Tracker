@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "work-tracker",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "work-tracker",
+      "database_id": "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "SYNC", "class_name": "SyncHub" }]
+  },
+
+  // SQLite-backed classes are the only kind available on the Workers free plan.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncHub"] }],
+
+  "vars": {
+    // Set to your Access team domain + application AUD to enforce auth.
+    // Left blank locally so `wrangler dev` works without Zero Trust.
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  }
+}

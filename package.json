@@ -1,0 +1,15 @@
+{
+  "name": "work-tracker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute work-tracker --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute work-tracker --remote --file=./schema.sql",
+    "test": "TZ=America/New_York node test/stats.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.129.1"
+  }
+}

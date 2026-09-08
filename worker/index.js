@@ -1,0 +1,234 @@
+import { verifyAccess } from './access.js';
+
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  });
+
+// ---------- input coercion ----------
+// Everything crossing the wire is untrusted, including from our own client:
+// a stale tab can send anything. Coerce hard rather than trusting shapes.
+
+const str = (v, max = 200) => (typeof v === 'string' ? v.slice(0, max) : '');
+const int = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0);
+const intOrNull = (v) => (v === null || v === undefined || v === '' ? null : int(v));
+const id = (v) => {
+  const s = str(v, 64);
+  return /^[A-Za-z0-9_-]{1,64}$/.test(s) ? s : null;
+};
+
+function cleanBreaks(v) {
+  if (!Array.isArray(v)) return [];
+  return v
+    .slice(0, 100)
+    .map((b) => ({ s: int(b?.s), e: intOrNull(b?.e) }))
+    .filter((b) => b.s > 0 && (b.e === null || b.e >= b.s));
+}
+
+// ---------- sync ----------
+
+async function readSince(db, since) {
+  const [jobs, shifts, payments, counter] = await db.batch([
+    db.prepare('SELECT * FROM jobs WHERE rev > ?1 ORDER BY rev').bind(since),
+    db.prepare('SELECT * FROM shifts WHERE rev > ?1 ORDER BY rev').bind(since),
+    db.prepare('SELECT * FROM payments WHERE rev > ?1 ORDER BY rev').bind(since),
+    db.prepare('SELECT rev FROM counter WHERE id = 1'),
+  ]);
+  return {
+    rev: counter.results[0]?.rev ?? 0,
+    jobs: jobs.results,
+    shifts: (shifts.results || []).map((s) => ({ ...s, breaks: JSON.parse(s.breaks || '[]') })),
+    payments: payments.results,
+  };
+}
+
+function buildStatements(db, ops, rev) {
+  const out = [];
+  for (const raw of ops.slice(0, 200)) {
+    const kind = str(raw?.type, 16);
+    const op = str(raw?.op, 8);
+    const d = raw?.data || {};
+    const rowId = id(d.id);
+    if (!rowId) continue;
+
+    if (op === 'delete') {
+      const table = { job: 'jobs', shift: 'shifts', payment: 'payments' }[kind];
+      if (!table) continue;
+      out.push(
+        db.prepare(`UPDATE ${table} SET deleted = 1, rev = ?2 WHERE id = ?1`).bind(rowId, rev),
+      );
+      continue;
+    }
+    if (op !== 'put') continue;
+
+    if (kind === 'job') {
+      out.push(
+        db
+          .prepare(
+            `INSERT INTO jobs (id, name, color, archived, created_ms, rev, deleted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)
+             ON CONFLICT(id) DO UPDATE SET
+               name = ?2, color = ?3, archived = ?4, rev = ?6, deleted = 0`,
+          )
+          .bind(
+            rowId,
+            str(d.name, 80) || 'Untitled',
+            str(d.color, 16) || '#6a9c5f',
+            d.archived ? 1 : 0,
+            int(d.created_ms) || Date.now(),
+            rev,
+          ),
+      );
+    } else if (kind === 'shift') {
+      const jobId = id(d.job_id);
+      if (!jobId) continue;
+      out.push(
+        db
+          .prepare(
+            `INSERT INTO shifts (id, job_id, start_ms, end_ms, breaks, note, rev, deleted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)
+             ON CONFLICT(id) DO UPDATE SET
+               job_id = ?2, start_ms = ?3, end_ms = ?4, breaks = ?5, note = ?6, rev = ?7, deleted = 0`,
+          )
+          .bind(
+            rowId,
+            jobId,
+            int(d.start_ms),
+            intOrNull(d.end_ms),
+            JSON.stringify(cleanBreaks(d.breaks)),
+            str(d.note, 500),
+            rev,
+          ),
+      );
+    } else if (kind === 'payment') {
+      const jobId = id(d.job_id);
+      if (!jobId) continue;
+      out.push(
+        db
+          .prepare(
+            `INSERT INTO payments (id, job_id, paid_ms, amount_cents, set_aside_cents, note, rev, deleted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)
+             ON CONFLICT(id) DO UPDATE SET
+               job_id = ?2, paid_ms = ?3, amount_cents = ?4, set_aside_cents = ?5,
+               note = ?6, rev = ?7, deleted = 0`,
+          )
+          .bind(
+            rowId,
+            jobId,
+            int(d.paid_ms),
+            int(d.amount_cents),
+            Math.max(0, int(d.set_aside_cents)),
+            str(d.note, 500),
+            rev,
+          ),
+      );
+    }
+  }
+  return out;
+}
+
+async function handleMutate(request, env) {
+  const body = await request.json().catch(() => null);
+  const ops = Array.isArray(body?.ops) ? body.ops : null;
+  if (!ops) return json({ error: 'ops must be an array' }, 400);
+  if (ops.length === 0) return json({ error: 'no ops' }, 400);
+
+  // One rev per batch: a batch is one logical change from a client's point of
+  // view, and clients only ever ask for "everything after rev N".
+  const bumped = await env.DB.prepare(
+    'UPDATE counter SET rev = rev + 1 WHERE id = 1 RETURNING rev',
+  ).first();
+  const rev = bumped?.rev;
+  if (!rev) return json({ error: 'could not allocate rev' }, 500);
+
+  const stmts = buildStatements(env.DB, ops, rev);
+  if (stmts.length === 0) return json({ error: 'no valid ops' }, 400);
+  await env.DB.batch(stmts);
+
+  // Tell every other open tab/device to pull.
+  const hub = env.SYNC.get(env.SYNC.idFromName('hub'));
+  await hub.fetch('https://hub/broadcast', {
+    method: 'POST',
+    body: JSON.stringify({ rev, origin: str(body.origin, 64) }),
+  });
+
+  return json({ rev });
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+
+    const auth = await verifyAccess(request, env);
+    if (!auth.ok) return json({ error: 'unauthorized', reason: auth.reason }, 401);
+
+    try {
+      if (url.pathname === '/api/ws') {
+        if (request.headers.get('Upgrade') !== 'websocket') {
+          return json({ error: 'expected websocket upgrade' }, 426);
+        }
+        const hub = env.SYNC.get(env.SYNC.idFromName('hub'));
+        return hub.fetch(request);
+      }
+
+      if (url.pathname === '/api/sync' && request.method === 'GET') {
+        const since = Math.max(0, int(url.searchParams.get('since')));
+        return json(await readSince(env.DB, since));
+      }
+
+      if (url.pathname === '/api/mutate' && request.method === 'POST') {
+        return await handleMutate(request, env);
+      }
+
+      if (url.pathname === '/api/whoami') {
+        return json({ email: auth.email, authEnforced: !auth.skipped });
+      }
+
+      return json({ error: 'not found' }, 404);
+    } catch (err) {
+      return json({ error: String(err?.message || err) }, 500);
+    }
+  },
+};
+
+// One instance ("hub") holds every open socket. Hibernation means idle
+// connections cost nothing against the free plan's duration budget, and the
+// ping/pong auto-response is handled without ever waking the object.
+export class SyncHub {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair('ping', 'pong'),
+    );
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/broadcast') {
+      const { rev, origin } = await request.json();
+      const msg = JSON.stringify({ type: 'changed', rev, origin });
+      for (const ws of this.ctx.getWebSockets()) {
+        try {
+          ws.send(msg);
+        } catch {
+          // Socket died between getWebSockets() and send(); it will be cleaned
+          // up by webSocketClose. Nothing to do.
+        }
+      }
+      return new Response(null, { status: 204 });
+    }
+
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1]);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  async webSocketClose(ws) {
+    try {
+      ws.close();
+    } catch {}
+  }
+}
