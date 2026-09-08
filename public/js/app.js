@@ -199,8 +199,9 @@ function tick() {
 
 function renderTodayTiles(now) {
   const d0 = S.startOfDay(now);
-  const today = S.summarize(store.data, { from: d0, to: now + 1, now, allowRate: false });
-  const week = S.summarize(store.data, { from: S.startOfWeek(now), to: now + 1, now, allowRate: false });
+  const endOfToday = d0 + S.DAY_MS;
+  const today = S.summarize(store.data, { from: d0, to: endOfToday, now, allowRate: false });
+  const week = S.summarize(store.data, { from: S.startOfWeek(now), to: endOfToday, now, allowRate: false });
   $('#todayTiles').innerHTML = `
     <div class="tile"><div class="k">Today</div><div class="v hours">${hours(today.hours)}</div></div>
     <div class="tile"><div class="k">This week</div><div class="v hours">${hours(week.hours)}</div>
@@ -599,7 +600,7 @@ function renderSetup() {
   const now = Date.now();
   const jobs = store.activeJobs;
   $('#jobList').innerHTML = jobs.length ? jobs.map((j) => {
-    const s = S.summarize(store.data, { from: -8640000000000000, to: now + 1, jobId: j.id, now, allowRate: false });
+    const s = S.summarize(store.data, { from: -8640000000000000, to: S.startOfDay(now) + S.DAY_MS, jobId: j.id, now, allowRate: false });
     return `<div class="jobitem ${j.archived ? 'archived' : ''}">
       <span class="swatch" style="background:${esc(j.color)}"></span>
       <span class="nm">${esc(j.name)}${j.archived ? ' · archived' : ''}</span>

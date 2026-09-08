@@ -157,15 +157,20 @@ export function summarize(data, { from, to, jobId = null, now = Date.now(), allo
  * a measure of deposit timing, not of how valuable the work was.
  */
 export function ranges(now = Date.now()) {
-  const endOfNow = now + 1;
+  // Windows run to the END of today, not to `now`. A deposit is a date, not a
+  // timestamp, and is stored at local noon — so a window ending at `now` would
+  // drop a deposit dated today for the whole morning. Extending past `now` is
+  // safe for hours: an open shift is clamped at `now` inside workedMsInWindow,
+  // and a closed shift cannot end in the future.
+  const endOfToday = startOfDay(now) + DAY_MS;
   return [
-    { key: 'wtd',   label: 'Week to date',  from: startOfWeek(now),                to: endOfNow, allowRate: false },
-    { key: 'week',  label: 'Last 7 days',   from: addDays(startOfDay(now), -6),    to: endOfNow, allowRate: false },
-    { key: 'mtd',   label: 'Month to date', from: startOfMonth(now),               to: endOfNow, allowRate: true  },
-    { key: 'd90',   label: 'Last 90 days',  from: addDays(startOfDay(now), -89),   to: endOfNow, allowRate: true  },
-    { key: 'ytd',   label: 'Year to date',  from: startOfYear(now),                to: endOfNow, allowRate: true  },
-    { key: 'y1',    label: 'Last 12 months',from: addMonths(startOfMonth(now), -11), to: endOfNow, allowRate: true },
-    { key: 'all',   label: 'All time',      from: -8640000000000000,               to: endOfNow, allowRate: true  },
+    { key: 'wtd',   label: 'Week to date',  from: startOfWeek(now),                  to: endOfToday, allowRate: false },
+    { key: 'week',  label: 'Last 7 days',   from: addDays(startOfDay(now), -6),      to: endOfToday, allowRate: false },
+    { key: 'mtd',   label: 'Month to date', from: startOfMonth(now),                 to: endOfToday, allowRate: true  },
+    { key: 'd90',   label: 'Last 90 days',  from: addDays(startOfDay(now), -89),     to: endOfToday, allowRate: true  },
+    { key: 'ytd',   label: 'Year to date',  from: startOfYear(now),                  to: endOfToday, allowRate: true  },
+    { key: 'y1',    label: 'Last 12 months',from: addMonths(startOfMonth(now), -11), to: endOfToday, allowRate: true  },
+    { key: 'all',   label: 'All time',      from: -8640000000000000,                 to: endOfToday, allowRate: true  },
   ];
 }
 
@@ -180,7 +185,7 @@ export function bucketSeries(data, { unit = 'month', count = 12, jobId = null, n
   const anchor = stepStart(now);
   for (let i = count - 1; i >= 0; i--) {
     const from = back(anchor, i);
-    const to = i === 0 ? now + 1 : back(anchor, i - 1);
+    const to = i === 0 ? startOfDay(now) + DAY_MS : back(anchor, i - 1);
     const s = summarize(data, { from, to, jobId, now, allowRate: false });
     out.push({ from, to, hours: s.hours, incomeCents: s.incomeCents, netCents: s.netCents });
   }

@@ -83,5 +83,30 @@ console.log('\n-- heatmap --');
 const grid = S.heatmap(mk([overnight],[]), { now });
 ok('overnight spreads across cells', near(grid[1][22]+grid[1][23], 2, 0.01) && near(grid[2][0]+grid[2][1], 2, 0.01));
 
+console.log('\n-- deposit dated today (regression) --');
+// The date picker stores a deposit at local noon. Windows must run to the end
+// of today, or a deposit dated today vanishes from every stat until midday.
+{
+  const nowAM = at(2026,9,15,9,0);          // 9am
+  const todayNoon = at(2026,9,15,12,0);     // how "today" is stored
+  const d = mk(
+    [{ job_id:'j', start_ms: at(2026,9,14,9), end_ms: at(2026,9,14,19), breaks: [] }],
+    [{ job_id:'j', paid_ms: todayNoon, amount_cents: 50000, set_aside_cents: 0 }],
+  );
+  for (const key of ['mtd','d90','ytd','y1','all']) {
+    const r = S.ranges(nowAM).find(x => x.key === key);
+    const su = S.summarize(d, { from: r.from, to: r.to, now: nowAM, allowRate: r.allowRate });
+    ok(`today's deposit counts in ${key}`, su.incomeCents === 50000, su.incomeCents);
+  }
+  const b = S.bucketSeries(d, { unit:'month', count:3, now: nowAM });
+  ok('today\'s deposit counts in the current month bucket', b[b.length-1].incomeCents === 50000);
+
+  // The window now extends past `now`; hours must not follow it into the future.
+  const openNow = mk([{ job_id:'j', start_ms: at(2026,9,15,8), end_ms: null, breaks: [] }], []);
+  const r = S.ranges(nowAM).find(x => x.key === 'mtd');
+  const su = S.summarize(openNow, { from: r.from, to: r.to, now: nowAM, allowRate: false });
+  ok('an open shift still accrues only to now, not to end of day', near(su.hours, 1, 0.001), su.hours);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
