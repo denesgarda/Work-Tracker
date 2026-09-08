@@ -4,6 +4,10 @@
   "main": "worker/index.js",
   "compatibility_date": "2026-09-01",
 
+  // Access protects the custom domain only. Leaving the workers.dev route on
+  // would serve this same app from a hostname Access never sees.
+  "workers_dev": false,
+
   "assets": { "directory": "./public", "binding": "ASSETS" },
 
   "d1_databases": [
