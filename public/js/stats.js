@@ -10,6 +10,8 @@
 
 export const HOUR_MS = 3600000;
 export const DAY_MS = 86400000;
+/** Lower bound for an unbounded window. Never divide by it. */
+export const MIN_TIME = -8640000000000000;
 
 // --- local-time boundaries -------------------------------------------------
 // Deliberately local, not UTC: a work day is a wall-clock day. Constructing
@@ -167,10 +169,11 @@ export function ranges(now = Date.now()) {
     { key: 'wtd',   label: 'Week to date',  from: startOfWeek(now),                  to: endOfToday, allowRate: false },
     { key: 'week',  label: 'Last 7 days',   from: addDays(startOfDay(now), -6),      to: endOfToday, allowRate: false },
     { key: 'mtd',   label: 'Month to date', from: startOfMonth(now),                 to: endOfToday, allowRate: true  },
+    { key: 'd30',   label: 'Last 30 days',  from: addDays(startOfDay(now), -29),      to: endOfToday, allowRate: true  },
     { key: 'd90',   label: 'Last 90 days',  from: addDays(startOfDay(now), -89),     to: endOfToday, allowRate: true  },
     { key: 'ytd',   label: 'Year to date',  from: startOfYear(now),                  to: endOfToday, allowRate: true  },
     { key: 'y1',    label: 'Last 12 months',from: addMonths(startOfMonth(now), -11), to: endOfToday, allowRate: true  },
-    { key: 'all',   label: 'All time',      from: -8640000000000000,                 to: endOfToday, allowRate: true  },
+    { key: 'all',   label: 'All time',      from: MIN_TIME,                          to: endOfToday, allowRate: true  },
   ];
 }
 
@@ -228,7 +231,7 @@ export function cumulativeSeries(data, { jobId = null, now = Date.now(), stepDay
   const out = [];
   const end = startOfDay(now) + DAY_MS;
   for (let t = addDays(startOfDay(first), stepDays); t <= end; t = addDays(t, stepDays)) {
-    const s = summarize(data, { from: -8640000000000000, to: t, jobId, now, allowRate: false });
+    const s = summarize(data, { from: MIN_TIME, to: t, jobId, now, allowRate: false });
     out.push({ t, hours: s.hours, incomeCents: s.incomeCents, netCents: s.netCents });
   }
   return out;
@@ -313,9 +316,11 @@ export function activityStats(data, { from, to, jobId = null, now = Date.now() }
     breakMs += shiftBreakMs(s, now);
   }
 
-  const spanDays = Number.isFinite(from)
-    ? Math.max(1, Math.round((Math.min(to, now + DAY_MS) - from) / DAY_MS))
-    : null;
+  // An unbounded window has no start date to measure against, so fall back to
+  // the first day with any activity. Measuring against the sentinel produced
+  // "188 of 100020705".
+  const lo = from <= MIN_TIME ? (firstActivityAt(data, jobId) ?? now) : from;
+  const spanDays = Math.max(1, Math.round((Math.min(to, now + DAY_MS) - lo) / DAY_MS));
 
   return {
     workedMs,
@@ -423,7 +428,7 @@ export function cumulativeByHours(data, { jobId = null, now = Date.now(), stepDa
   const out = [];
   const end = startOfDay(now) + DAY_MS;
   for (let t = addDays(startOfDay(first), stepDays); t <= end; t = addDays(t, stepDays)) {
-    const s = summarize(data, { from: -8640000000000000, to: t, jobId, now, allowRate: false });
+    const s = summarize(data, { from: MIN_TIME, to: t, jobId, now, allowRate: false });
     out.push({ t, hours: s.hours, incomeCents: s.incomeCents, netCents: s.netCents });
   }
   return out;
@@ -442,4 +447,94 @@ function firstActivityAt(data, jobId) {
   for (const s of data.shifts) if (!jobId || s.job_id === jobId) min = Math.min(min, s.start_ms);
   for (const p of data.payments) if (!jobId || p.job_id === jobId) min = Math.min(min, p.paid_ms);
   return Number.isFinite(min) ? min : null;
+}
+
+// ── metric registry ───────────────────────────────────────────────
+// Every figure the Insights tab shows is declared here, so any of them can be
+// charted over time with the same machinery. `kind` tells the UI how to format
+// a value; the stats layer stays free of presentation.
+
+export const METRICS = {
+  rate:          { label: 'Effective rate',         kind: 'rate',     get: (d, w) => summarize(d, { ...w, allowRate: true }).rateCents },
+  netRate:       { label: 'Rate after tax',         kind: 'rate',     get: (d, w) => summarize(d, { ...w, allowRate: true }).netRateCents },
+  hours:         { label: 'Hours',                  kind: 'hours',    get: (d, w) => summarize(d, w).hours },
+  income:        { label: 'Deposits received',      kind: 'money',    get: (d, w) => summarize(d, w).incomeCents },
+  setAside:      { label: 'Set aside for tax',      kind: 'money',    get: (d, w) => summarize(d, w).setAsideCents },
+  kept:          { label: 'Kept after tax',         kind: 'money',    get: (d, w) => summarize(d, w).netCents },
+  shifts:        { label: 'Shifts',                 kind: 'count',    get: (d, w) => summarize(d, w).shiftCount },
+  depositCount:  { label: 'Number of deposits',     kind: 'count',    get: (d, w) => depositStats(d, w).count },
+  avgDeposit:    { label: 'Average deposit',        kind: 'money',    get: (d, w) => depositStats(d, w).avgCents || null },
+  largestDeposit:{ label: 'Largest deposit',        kind: 'money',    get: (d, w) => depositStats(d, w).largestCents || null },
+  gap:           { label: 'Gap between deposits',   kind: 'days',     get: (d, w) => depositStats(d, w).avgGapDays },
+  hoursPer1k:    { label: 'Hours per $1,000',       kind: 'hours',    get: (d, w) => {
+                     const s = summarize(d, w);
+                     return s.incomeCents > 0 ? s.hours / (s.incomeCents / 100000) : null; } },
+  perDayWorked:  { label: 'Earned per day worked',  kind: 'money',    get: (d, w) => {
+                     const s = summarize(d, w), a = activityStats(d, w);
+                     return a.daysWorked ? s.incomeCents / a.daysWorked : null; } },
+  daysWorked:    { label: 'Days worked',            kind: 'count',    get: (d, w) => activityStats(d, w).daysWorked },
+  hoursPerDay:   { label: 'Hours on a working day', kind: 'duration', get: (d, w) => activityStats(d, w).avgMsPerWorkingDay || null },
+  avgShift:      { label: 'Average shift',          kind: 'duration', get: (d, w) => activityStats(d, w).avgShiftMs || null },
+  longestShift:  { label: 'Longest shift',          kind: 'duration', get: (d, w) => activityStats(d, w).longestShiftMs || null },
+  breakTime:     { label: 'Time on breaks',         kind: 'duration', get: (d, w) => activityStats(d, w).breakMs || null },
+  weekendPct:    { label: 'Worked at weekends',     kind: 'pct',      get: (d, w) => patternStats(d, w).weekendPct },
+  lateNightPct:  { label: 'Worked after 10pm',      kind: 'pct',      get: (d, w) => patternStats(d, w).lateNightPct },
+};
+
+/**
+ * One metric across consecutive blocks the width of the selected range, so
+ * "last 90 days" becomes a row of 90-day blocks you can compare against each
+ * other. An unbounded range has no width to repeat, so it falls back to years.
+ */
+export function metricSeries(data, key, { range, jobId = null, now = Date.now(), count = 10 }) {
+  const metric = METRICS[key];
+  if (!metric) return null;
+
+  const first = firstActivityAt(data, jobId);
+  if (first === null) return { metric, points: [], unit: 'block' };
+
+  const points = [];
+  let unit = 'block';
+
+  if (range.from <= MIN_TIME) {
+    unit = 'year';
+    const y0 = new Date(first).getFullYear();
+    const y1 = new Date(now).getFullYear();
+    for (let y = Math.max(y0, y1 - count + 1); y <= y1; y++) {
+      const from = new Date(y, 0, 1).getTime();
+      const to = new Date(y + 1, 0, 1).getTime();
+      points.push({ from, to, label: String(y) });
+    }
+  } else {
+    const span = range.to - range.from;
+    for (let i = count - 1; i >= 0; i--) {
+      const to = range.to - span * i;
+      const from = to - span;
+      if (to <= first) continue;
+      points.push({ from, to, label: labelForSpan(from, span) });
+    }
+  }
+
+  for (const p of points) {
+    p.value = metric.get(data, { from: p.from, to: p.to, jobId, now });
+  }
+  return { metric, points, unit };
+}
+
+function labelForSpan(from, span) {
+  const d = new Date(from);
+  if (span >= 300 * DAY_MS) return String(d.getFullYear());
+  if (span >= 25 * DAY_MS) return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** How many whole buckets of `unit` fit between the first activity and now. */
+export function periodsSinceStart(data, { unit, jobId = null, now = Date.now(), cap = 60 }) {
+  const first = firstActivityAt(data, jobId);
+  if (first === null) return 1;
+  const n = unit === 'week'
+    ? Math.floor((startOfWeek(now) - startOfWeek(first)) / (7 * DAY_MS)) + 1
+    : (new Date(now).getFullYear() - new Date(first).getFullYear()) * 12
+      + (new Date(now).getMonth() - new Date(first).getMonth()) + 1;
+  return Math.max(1, Math.min(cap, n));
 }

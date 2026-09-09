@@ -19,6 +19,7 @@ const GRID = '#3a3733';
 const INK = '#9b958a';
 const FAINT = '#6f6a61';
 const SURFACE = '#24221f';
+const CARD_PAD = 18;   // matches --pad in app.css
 
 const money0 = (c) => '$' + Math.round(c / 100).toLocaleString();
 const money2 = (c) => '$' + (c / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -47,14 +48,22 @@ const seg = (key, choices) => `<div class="chart-ctrl" data-opt="${key}">` +
     `<button type="button" data-v="${v}" class="${String(opts[key]) === String(v) ? 'is-active' : ''}">${esc(label)}</button>`).join('') +
   '</div>';
 
-function card(title, note, body, { legend = '', controls = '' } = {}) {
+function card(title, note, body, { legend = '', controls = '', axis = null } = {}) {
+  // A scrolling plot keeps its value axis outside the scroller, so the numbers
+  // stay readable however far back you scroll.
+  const plot = axis
+    ? `<div class="chart-hold is-scrolling">
+         <div class="chart-scroll">${body}<div class="tip" hidden></div></div>
+         <div class="chart-axis">${axis}</div>
+       </div>`
+    : `<div class="chart-hold">${body}<div class="tip" hidden></div></div>`;
   return `<div class="card chart">
     <div class="chart-head">
       <div><h2 class="card-title">${esc(title)}</h2>${note ? `<p class="chart-note">${esc(note)}</p>` : ''}</div>
       ${controls}
     </div>
     ${legend}
-    <div class="chart-hold">${body}<div class="tip" hidden></div></div>
+    ${plot}
   </div>`;
 }
 
@@ -136,43 +145,72 @@ function barChart(buckets, { width, title, note, color, value, format, unit, con
   const vals = buckets.map(value);
   if (!vals.some((v) => v > 0)) return { html: card(title, note, empty('Nothing logged yet.'), { controls }) };
 
-  const pad = { t: 12, r: 52, b: 24, l: 8 };
+  const AXIS_W = 54;
+  const MIN_SLOT = 26;
+  // Generous side padding so an edge label is never clipped by the scroller.
+  const pad = { t: 12, r: 18, b: 24, l: 20 };
   const h = 168;
-  const inner = { w: width - pad.l - pad.r, h: h - pad.t - pad.b };
+  // The measured width is the card's outer box; its own padding is not
+  // available to the plot, so subtract it or the plot always overflows.
+  const avail = Math.max(200, width - AXIS_W - CARD_PAD * 2);
+  // Wide enough to show every bucket legibly; the container scrolls if that
+  // exceeds the space available.
+  const contentW = Math.max(avail, buckets.length * MIN_SLOT + pad.l + pad.r);
+  const innerW = contentW - pad.l - pad.r;
+  const innerH = h - pad.t - pad.b;
   const max = niceMax(Math.max(...vals) * 1.1);
-  const n = buckets.length;
-  const slot = inner.w / n;
-  const bw = Math.max(5, Math.min(34, slot - 6));
-  const y = (v) => pad.t + inner.h - (v / max) * inner.h;
+  const slot = innerW / buckets.length;
+  const bw = Math.max(6, Math.min(34, slot - 6));
+  const y = (v) => pad.t + innerH - (v / max) * innerH;
 
   const bars = buckets.map((b, i) => {
     const v = value(b);
     const cx = pad.l + slot * i + slot / 2;
     return `<rect class="bar" data-i="${i}" x="${(cx - bw / 2).toFixed(1)}" y="${y(v).toFixed(1)}"
-      width="${bw.toFixed(1)}" height="${Math.max(v > 0 ? 2 : 0, pad.t + inner.h - y(v)).toFixed(1)}"
+      width="${bw.toFixed(1)}" height="${Math.max(v > 0 ? 2 : 0, pad.t + innerH - y(v)).toFixed(1)}"
       rx="4" fill="${color}" opacity="${v > 0 ? 1 : 0.25}"/>`;
   }).join('');
 
-  const every = n > 16 ? 4 : 3;
-  const labels = buckets.map((b, i) => (i % every === n % every || i === n - 1)
-    ? `<text x="${(pad.l + slot * i + slot / 2).toFixed(1)}" y="${h - 7}" fill="${FAINT}" font-size="10" text-anchor="middle">${esc(monthLabel(b.from))}</text>` : '').join('');
+  const every = slot < 34 ? Math.ceil(34 / slot) : 1;
+  const n = buckets.length;
+  const labels = buckets.map((b, i) => ((n - 1 - i) % every === 0)
+    ? `<text x="${(pad.l + slot * i + slot / 2).toFixed(1)}" y="${h - 7}" fill="${FAINT}" font-size="10" text-anchor="middle">${esc(bucketLabel(b))}</text>` : '').join('');
 
-  const svg = `<svg viewBox="0 0 ${width} ${h}" width="100%" height="${h}" role="img"
+  const svg = `<svg viewBox="0 0 ${contentW} ${h}" width="${contentW}" height="${h}" role="img"
       aria-label="${esc(title)}: most recent ${esc(format(value(buckets[n - 1])))} ${esc(unit)}">
-    ${[0, max / 2, max].map((v) => `
-      <line x1="${pad.l}" x2="${pad.l + inner.w}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>
-      <text x="${pad.l + inner.w + 6}" y="${(y(v) + 3.5).toFixed(1)}" fill="${FAINT}" font-size="10">${esc(format(v))}</text>`).join('')}
+    ${[0, max / 2, max].map((v) => `<line x1="${pad.l}" x2="${pad.l + innerW}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`).join('')}
     ${bars}${labels}</svg>`;
 
+  const axis = [0, max / 2, max].map((v) =>
+    `<span style="top:${(y(v) - 7).toFixed(1)}px">${esc(format(v))}</span>`).join('');
+
   return {
-    html: card(title, note, svg, { controls }),
-    wire: (root) => wireBars(root, buckets, (b) => {
-      const when = new Date(b.from).toLocaleDateString(undefined,
-        opts.bucket === 'week' ? { month: 'short', day: 'numeric' } : { month: 'long', year: 'numeric' });
-      return `<b>${esc(when)}</b><span>${esc(format(value(b)))} ${esc(unit)}</span>` +
-             (drill ? '<span class="dim">Tap to see it in History</span>' : '');
-    }, drill),
+    html: card(title, note, svg, { controls, axis }),
+    wire: (root) => {
+      wireBars(root, buckets, (b) =>
+        `<b>${esc(bucketLabel(b, true))}</b><span>${esc(format(value(b)))} ${esc(unit)}</span>` +
+        (drill ? '<span class="dim">Tap to see it in History</span>' : ''), drill);
+      // Start at the present rather than at the oldest data — but only when
+      // there is a real overflow, so a few stray pixels can't shave the first
+      // label off.
+      const sc = root.querySelector('.chart-scroll');
+      if (sc && sc.scrollWidth - sc.clientWidth > 12) sc.scrollLeft = sc.scrollWidth;
+    },
   };
+}
+
+function bucketLabel(b, long = false) {
+  const d = new Date(b.from);
+  if (opts.bucket === 'week') {
+    return long
+      ? `Week of ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
+      : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  return long
+    ? d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+    : (d.getMonth() === 0
+        ? `${monthLabel(b.from)} ${String(d.getFullYear()).slice(2)}`
+        : monthLabel(b.from));
 }
 
 // ── cumulative: earnings against hours ────────────────────────────
@@ -265,8 +303,8 @@ function lengthChart(data, { jobId, now, from, to, width }) {
 
 function patternChart(data, { jobId, now, width }) {
   const span = opts.heat;
-  const controls = seg('heat', [[90, '90d'], [180, '180d'], [365, '1y']]);
-  const from = S.addDays(S.startOfDay(now), -(span - 1));
+  const controls = seg('heat', [[90, '90d'], [180, '180d'], [365, '1y'], [0, 'All']]);
+  const from = span === 0 ? S.MIN_TIME : S.addDays(S.startOfDay(now), -(span - 1));
   const grid = S.heatmap(data, { jobId, now, from, to: now + 1 });
   const max = Math.max(...grid.flat());
   const title = 'When you actually work';
@@ -293,7 +331,8 @@ function patternChart(data, { jobId, now, width }) {
     `<text x="${(padL + hr * cw).toFixed(1)}" y="${h - 5}" fill="${FAINT}" font-size="10">${hr === 0 ? '12a' : hr === 12 ? '12p' : hr > 12 ? hr - 12 + 'p' : hr + 'a'}</text>`).join('');
 
   return {
-    html: card(title, `Hours by weekday and time of day, over the last ${span} days.`,
+    html: card(title, span === 0 ? 'Hours by weekday and time of day, across everything logged.'
+                                 : `Hours by weekday and time of day, over the last ${span} days.`,
       `<svg viewBox="0 0 ${width} ${h}" width="100%" height="${h}" role="img"
          aria-label="Hours worked by day of week and hour of day">${rowLabels}${cells}${colLabels}</svg>`,
       { controls }),
@@ -303,20 +342,26 @@ function patternChart(data, { jobId, now, width }) {
 
 // ── interaction ───────────────────────────────────────────────────
 
-const tipFor = (root) => ({
-  svg: root.querySelector('svg'),
-  tip: root.querySelector('.tip'),
-  hold: root.querySelector('.chart-hold'),
-});
+const tipFor = (root) => {
+  const svg = root.querySelector('svg');
+  return {
+    svg,
+    tip: root.querySelector('.tip'),
+    // Inside a scroller the tip is positioned in content coordinates, so it
+    // must be clamped to the content width rather than the visible width.
+    bound: root.querySelector('.chart-scroll') ? svg.getBBox?.().width || svg.clientWidth
+                                               : root.querySelector('.chart-hold').clientWidth,
+  };
+};
 
-function place(hold, tip, px, py) {
+function place(bound, tip, px, py) {
   tip.hidden = false;
   const w = tip.offsetWidth;
-  tip.style.transform = `translate(${Math.max(4, Math.min(hold.clientWidth - w - 4, px - w / 2))}px, ${Math.max(0, py - tip.offsetHeight - 12)}px)`;
+  tip.style.transform = `translate(${Math.max(4, Math.min(Math.max(w + 8, bound) - w - 4, px - w / 2))}px, ${Math.max(0, py - tip.offsetHeight - 12)}px)`;
 }
 
 function wireCrosshair(root, points, render) {
-  const { svg, tip, hold } = tipFor(root);
+  const { svg, tip, bound } = tipFor(root);
   const capture = svg.querySelector('.capture');
   const hover = svg.querySelector('.hover');
   const cross = svg.querySelector('.cross');
@@ -331,7 +376,7 @@ function wireCrosshair(root, points, render) {
     cross.setAttribute('x1', best.x); cross.setAttribute('x2', best.x);
     dot.setAttribute('cx', best.x); dot.setAttribute('cy', best.y);
     tip.innerHTML = render(best);
-    place(hold, tip, best.x / scale, best.y / scale);
+    place(bound, tip, best.x / scale, best.y / scale);
   };
   capture.addEventListener('pointermove', move);
   capture.addEventListener('pointerdown', move);
@@ -339,7 +384,7 @@ function wireCrosshair(root, points, render) {
 }
 
 function wireBars(root, buckets, render, drill) {
-  const { svg, tip, hold } = tipFor(root);
+  const { svg, tip, bound } = tipFor(root);
   svg.querySelectorAll('.bar').forEach((bar) => {
     const b = buckets[+bar.dataset.i];
     if (drill) bar.style.cursor = 'pointer';
@@ -347,7 +392,7 @@ function wireBars(root, buckets, render, drill) {
       const r = svg.getBoundingClientRect();
       const scale = svg.viewBox.baseVal.width / r.width;
       tip.innerHTML = render(b);
-      place(hold, tip, (+bar.getAttribute('x') + +bar.getAttribute('width') / 2) / scale, +bar.getAttribute('y') / scale);
+      place(bound, tip, (+bar.getAttribute('x') + +bar.getAttribute('width') / 2) / scale, +bar.getAttribute('y') / scale);
       bar.style.filter = 'brightness(1.25)';
     };
     bar.addEventListener('pointerenter', show);
@@ -359,7 +404,7 @@ function wireBars(root, buckets, render, drill) {
 }
 
 function wireCells(root, days) {
-  const { svg, tip, hold } = tipFor(root);
+  const { svg, tip, bound } = tipFor(root);
   svg.querySelectorAll('.cell').forEach((cell) => {
     const show = () => {
       const v = +cell.dataset.v;
@@ -372,7 +417,7 @@ function wireCells(root, days) {
         const hr = +cell.dataset.h;
         tip.innerHTML = `<b>${days[+cell.dataset.d]} ${hr === 0 ? '12am' : hr === 12 ? '12pm' : hr > 12 ? hr - 12 + 'pm' : hr + 'am'}</b><span>${v.toFixed(1)}h logged</span>`;
       }
-      place(hold, tip, (+cell.getAttribute('x') + +cell.getAttribute('width') / 2) / scale, +cell.getAttribute('y') / scale);
+      place(bound, tip, (+cell.getAttribute('x') + +cell.getAttribute('width') / 2) / scale, +cell.getAttribute('y') / scale);
     };
     cell.addEventListener('pointerenter', show);
     cell.addEventListener('pointerdown', show);
@@ -390,14 +435,17 @@ export function renderCharts(container, data, { jobId, now, from, to, onDrill })
   const width = Math.max(280, container.clientWidth || 340);
   const byWeek = opts.bucket === 'week';
   const bucketCtrl = seg('bucket', [['week', 'Weekly'], ['month', 'Monthly']]);
-  const buckets = S.bucketSeries(data, { unit: opts.bucket, count: byWeek ? 16 : 12, jobId, now });
+  // Every period since the first entry, so the bars carry the whole history
+  // and the container scrolls rather than truncating it.
+  const count = S.periodsSinceStart(data, { unit: opts.bucket, jobId, now, cap: byWeek ? 200 : 60 });
+  const buckets = S.bucketSeries(data, { unit: opts.bucket, count, jobId, now });
 
   const parts = [
     rateChart(data, { jobId, now, width }),
     barChart(buckets, {
       width, color: TIME, controls: bucketCtrl, drill: onDrill,
       title: byWeek ? 'Hours a week' : 'Hours a month',
-      note: byWeek ? 'The last sixteen weeks.' : 'The last twelve months.',
+      note: 'Everything logged. Scroll back through it.',
       value: (b) => b.hours, format: (v) => Math.round(v) + 'h', unit: 'worked',
     }),
     barChart(buckets, {
@@ -437,4 +485,60 @@ export function renderCharts(container, data, { jobId, now, from, to, onDrill })
       }, 180);
     });
   }
+}
+
+
+// ── metric breakdown, used by the tap-a-number popup ──────────────
+
+/**
+ * One metric charted across consecutive blocks the width of the chosen range.
+ * Rendered into an arbitrary element so it can live inside the sheet.
+ */
+export function renderMetricChart(el, series, { format, color = MONEY, subtitle = '' }) {
+  const pts = series.points.filter((p) => p.value !== null && p.value !== undefined);
+  if (pts.length < 2) {
+    el.innerHTML = `<p class="empty">Not enough history to compare blocks yet.</p>`;
+    return;
+  }
+
+  const AXIS_W = 58, MIN_SLOT = 44;
+  const pad = { t: 14, r: 18, b: 34, l: 20 };
+  const h = 200;
+  const avail = Math.max(220, (el.clientWidth || 320) - AXIS_W);
+  const contentW = Math.max(avail, pts.length * MIN_SLOT + pad.l + pad.r);
+  const innerW = contentW - pad.l - pad.r;
+  const innerH = h - pad.t - pad.b;
+  const max = niceMax(Math.max(...pts.map((p) => p.value)) * 1.12);
+  const slot = innerW / pts.length;
+  const bw = Math.max(10, Math.min(46, slot - 10));
+  const y = (v) => pad.t + innerH - (v / max) * innerH;
+  const last = pts.length - 1;
+
+  const bars = pts.map((p, i) => {
+    const cx = pad.l + slot * i + slot / 2;
+    return `<rect class="bar" data-i="${i}" x="${(cx - bw / 2).toFixed(1)}" y="${y(p.value).toFixed(1)}"
+        width="${bw.toFixed(1)}" height="${Math.max(2, pad.t + innerH - y(p.value)).toFixed(1)}" rx="4"
+        fill="${color}" opacity="${i === last ? 1 : 0.62}"/>
+      <text x="${cx.toFixed(1)}" y="${h - 20}" fill="${FAINT}" font-size="10" text-anchor="middle">${esc(p.label)}</text>
+      <text x="${cx.toFixed(1)}" y="${h - 6}" fill="${i === last ? INK : FAINT}" font-size="10" text-anchor="middle">${esc(format(p.value))}</text>`;
+  }).join('');
+
+  const axis = [0, max / 2, max].map((v) =>
+    `<span style="top:${(y(v) - 7).toFixed(1)}px">${esc(format(v))}</span>`).join('');
+
+  el.innerHTML = `
+    ${subtitle ? `<p class="chart-note">${esc(subtitle)}</p>` : ''}
+    <div class="chart-hold is-scrolling">
+      <div class="chart-scroll">
+        <svg viewBox="0 0 ${contentW} ${h}" width="${contentW}" height="${h}" role="img"
+             aria-label="${esc(series.metric.label)} by period">
+          ${[0, max / 2, max].map((v) => `<line x1="${pad.l}" x2="${pad.l + innerW}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`).join('')}
+          ${bars}
+        </svg>
+      </div>
+      <div class="chart-axis">${axis}</div>
+    </div>`;
+
+  const sc = el.querySelector('.chart-scroll');
+  if (sc && sc.scrollWidth - sc.clientWidth > 12) sc.scrollLeft = sc.scrollWidth;
 }

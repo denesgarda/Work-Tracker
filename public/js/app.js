@@ -1,6 +1,6 @@
 import { store, newId } from './store.js';
 import * as S from './stats.js';
-import { renderCharts } from './charts.js';
+import { renderCharts, renderMetricChart } from './charts.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -640,12 +640,12 @@ function renderInsights() {
   };
 
   const rateTile = s0.rateCents !== null
-    ? `<div class="tile lead">
+    ? `<button class="tile lead" type="button" data-metric="rate">
          <div class="k">Effective rate — ${esc(r.label.toLowerCase())}</div>
          <div class="v money">${money(s0.rateCents)}<span class="unit">/hr</span></div>
          <div class="sub">${money(s0.netRateCents)}/hr after tax${
            p0 && p0.rateCents !== null ? ' · ' + delta(s0.rateCents, p0.rateCents, (v) => money(v)) : ''}</div>
-       </div>`
+       </button>`
     : `<div class="tile lead">
          <div class="k">Effective rate — ${esc(r.label.toLowerCase())}</div>
          <div class="v none">${esc(rateExplanation(r, s0))}</div>
@@ -653,12 +653,12 @@ function renderInsights() {
 
   $('#insightTiles').innerHTML = `
     ${rateTile}
-    <div class="tile"><div class="k">Hours</div><div class="v hours">${hours(s0.hours)}</div>
-      <div class="sub">${p0 ? esc(delta(s0.hours, p0.hours, (v) => hours(v))) : `${s0.shiftCount} shifts`}</div></div>
-    <div class="tile"><div class="k">Deposits</div><div class="v money">${money0(s0.incomeCents)}</div>
-      <div class="sub">${p0 ? esc(delta(s0.incomeCents, p0.incomeCents, (v) => money0(v))) : `${s0.paymentCount} payments`}</div></div>
-    <div class="tile"><div class="k">Kept after tax</div><div class="v money">${money0(s0.netCents)}</div>
-      <div class="sub">${s0.incomeCents ? ((s0.setAsideCents / s0.incomeCents) * 100).toFixed(0) + '% set aside' : '—'}</div></div>`;
+    <button class="tile" type="button" data-metric="hours"><div class="k">Hours</div><div class="v hours">${hours(s0.hours)}</div>
+      <div class="sub">${p0 ? esc(delta(s0.hours, p0.hours, (v) => hours(v))) : `${s0.shiftCount} shifts`}</div></button>
+    <button class="tile" type="button" data-metric="income"><div class="k">Deposits</div><div class="v money">${money0(s0.incomeCents)}</div>
+      <div class="sub">${p0 ? esc(delta(s0.incomeCents, p0.incomeCents, (v) => money0(v))) : `${s0.paymentCount} payments`}</div></button>
+    <button class="tile" type="button" data-metric="kept"><div class="k">Kept after tax</div><div class="v money">${money0(s0.netCents)}</div>
+      <div class="sub">${s0.incomeCents ? ((s0.setAsideCents / s0.incomeCents) * 100).toFixed(0) + '% set aside' : '—'}</div></button>`;
 
   const act = S.activityStats(data, win);
   const dep = S.depositStats(data, win);
@@ -678,13 +678,14 @@ function renderInsights() {
     <div class="card">
       <h2 class="card-title">Money</h2>
       ${statList([
-        ['Total received', dep.count ? money(dep.totalCents) : '—'],
-        ['Number of deposits', String(dep.count)],
-        ['Average deposit', dep.count ? money(dep.avgCents) : '—'],
-        ['Largest deposit', dep.count ? money(dep.largestCents) : '—'],
-        ['Hours per $1,000', hoursPer1k !== null ? hoursPer1k.toFixed(1) + 'h' : '—'],
-        ['Earned per day worked', perWorkingDay !== null ? money(perWorkingDay) : '—'],
-        ['Typical gap between deposits', dep.avgGapDays !== null ? Math.round(dep.avgGapDays) + ' days' : '—'],
+        ['Total received', dep.count ? money(dep.totalCents) : '—', 'income'],
+        ['Number of deposits', String(dep.count), 'depositCount'],
+        ['Average deposit', dep.count ? money(dep.avgCents) : '—', 'avgDeposit'],
+        ['Largest deposit', dep.count ? money(dep.largestCents) : '—', 'largestDeposit'],
+        ['Set aside for tax', money(s0.setAsideCents), 'setAside'],
+        ['Hours per $1,000', hoursPer1k !== null ? hoursPer1k.toFixed(1) + 'h' : '—', 'hoursPer1k'],
+        ['Earned per day worked', perWorkingDay !== null ? money(perWorkingDay) : '—', 'perDayWorked'],
+        ['Typical gap between deposits', dep.avgGapDays !== null ? Math.round(dep.avgGapDays) + ' days' : '—', 'gap'],
         ['Since your last deposit', dep.daysSinceLast !== null
           ? `${dep.daysSinceLast} day${dep.daysSinceLast === 1 ? '' : 's'}` +
             (dep.avgGapDays !== null && dep.daysSinceLast > dep.avgGapDays * 1.5 ? ' — longer than usual' : '')
@@ -695,11 +696,12 @@ function renderInsights() {
     <div class="card">
       <h2 class="card-title">Time</h2>
       ${statList([
-        ['Days worked', act.spanDays ? `${act.daysWorked} of ${act.spanDays}` : String(act.daysWorked)],
-        ['Hours on a working day', act.daysWorked ? dur(act.avgMsPerWorkingDay) : '—'],
-        ['Average shift', act.shiftCount ? dur(act.avgShiftMs) : '—'],
-        ['Longest shift', act.longestShiftMs ? dur(act.longestShiftMs) : '—'],
-        ['Time on breaks', act.breakMs ? `${dur(act.breakMs)} · ${pct(act.breakPct)} of clocked time` : 'None logged'],
+        ['Days worked', act.spanDays ? `${act.daysWorked} of ${act.spanDays}` : String(act.daysWorked), 'daysWorked'],
+        ['Shifts', String(act.shiftCount), 'shifts'],
+        ['Hours on a working day', act.daysWorked ? dur(act.avgMsPerWorkingDay) : '—', 'hoursPerDay'],
+        ['Average shift', act.shiftCount ? dur(act.avgShiftMs) : '—', 'avgShift'],
+        ['Longest shift', act.longestShiftMs ? dur(act.longestShiftMs) : '—', 'longestShift'],
+        ['Time on breaks', act.breakMs ? `${dur(act.breakMs)} · ${pct(act.breakPct)} of clocked time` : 'None logged', 'breakTime'],
       ])}
     </div>
 
@@ -708,8 +710,8 @@ function renderInsights() {
       ${statList([
         ['Busiest day', pat.busiestWeekday !== null ? DAYS[pat.busiestWeekday] : '—'],
         ['Typical start', clockOf(pat.medianStartMinutes)],
-        ['Worked at weekends', pct(pat.weekendPct)],
-        ['Worked after 10pm', pct(pat.lateNightPct)],
+        ['Worked at weekends', pct(pat.weekendPct), 'weekendPct'],
+        ['Worked after 10pm', pct(pat.lateNightPct), 'lateNightPct'],
       ])}
     </div>`;
 
@@ -727,9 +729,62 @@ function renderInsights() {
 }
 
 function statList(rows) {
-  return '<dl class="statlist">' + rows.map(([k, v]) =>
-    `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('') + '</dl>';
+  return '<dl class="statlist">' + rows.map(([k, v, metric]) => metric
+    ? `<div><button class="statrow" type="button" data-metric="${esc(metric)}">
+         <dt>${esc(k)}</dt><dd>${esc(v)}</dd></button></div>`
+    : `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('') + '</dl>';
 }
+
+// ── metric breakdown ──────────────────────────────────────────────
+
+const money0Fmt = (v) => money0(v);
+const FORMATTERS = {
+  money: money0Fmt,
+  rate: (v) => money(v) + '/hr',
+  hours: (v) => hours(v),
+  count: (v) => String(Math.round(v)),
+  pct: (v) => (v * 100).toFixed(0) + '%',
+  days: (v) => Math.round(v) + ' days',
+  duration: (v) => dur(v),
+};
+const TONE = { money: 'gold', rate: 'gold', days: 'gold' };
+
+/**
+ * Tapping any figure opens it as a row of blocks the width of the current
+ * range, so "last 90 days" becomes 90-day blocks compared side by side.
+ */
+function openMetricSheet(key) {
+  const spec = S.METRICS[key];
+  if (!spec) return;
+  const now = Date.now();
+  const range = S.ranges(now).find((x) => x.key === ui.insightsRange) || S.ranges(now)[0];
+  const jobId = ui.insightsJob || null;
+  const series = S.metricSeries(store.data, key, { range, jobId, now, count: 10 });
+  const fmt = FORMATTERS[spec.kind] || String;
+  const current = spec.get(store.data, { from: range.from, to: range.to, jobId, now });
+  const blockDays = Math.max(1, Math.round((range.to - range.from) / S.DAY_MS));
+
+  openSheet(spec.label, `
+    <div class="metric-now">
+      <div class="v ${TONE[spec.kind] === 'gold' ? 'money' : 'hours'}">${current == null ? '—' : esc(fmt(current))}</div>
+      <div class="k">${esc(range.label)}${ui.insightsJob ? ' · ' + esc(store.job(ui.insightsJob)?.name ?? '') : ''}</div>
+    </div>
+    <div id="metricChart"></div>
+  `, (root) => {
+    renderMetricChart($('#metricChart', root), series, {
+      format: fmt,
+      color: TONE[spec.kind] === 'gold' ? '#c98500' : '#199e70',
+      subtitle: series.unit === 'year'
+        ? 'One block per calendar year.'
+        : `Each block covers ${blockDays} days, so you can compare like with like.`,
+    });
+  });
+}
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-metric]');
+  if (el) openMetricSheet(el.dataset.metric);
+});
 
 // An empty rate should say why it is empty. "—" teaches nothing.
 function rateExplanation(range, s) {
@@ -745,7 +800,7 @@ function renderSetup() {
   const now = Date.now();
   const jobs = store.activeJobs;
   $('#jobList').innerHTML = jobs.length ? jobs.map((j) => {
-    const s = S.summarize(store.data, { from: -8640000000000000, to: S.startOfDay(now) + S.DAY_MS, jobId: j.id, now, allowRate: false });
+    const s = S.summarize(store.data, { from: S.MIN_TIME, to: S.startOfDay(now) + S.DAY_MS, jobId: j.id, now, allowRate: false });
     return `<div class="jobitem ${j.archived ? 'archived' : ''}">
       <span class="swatch" style="background:${esc(j.color)}"></span>
       <span class="nm">${esc(j.name)}${j.archived ? ' · archived' : ''}</span>

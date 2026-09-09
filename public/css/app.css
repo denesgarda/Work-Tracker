@@ -498,3 +498,53 @@ main {
   .chart-head { flex-direction: column; gap: 8px; }
   .chart-ctrl { align-self: flex-start; }
 }
+
+/* ── scrolling plots with a pinned value axis ───────────────────── */
+
+.chart-hold.is-scrolling { display: flex; align-items: stretch; gap: 0; }
+.chart-scroll {
+  position: relative; flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.chart-scroll::-webkit-scrollbar { height: 6px; }
+.chart-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.chart-scroll svg { display: block; }
+.chart-axis {
+  position: relative; flex: 0 0 54px; width: 54px;
+  pointer-events: none;
+}
+.chart-axis span {
+  position: absolute; right: 0; font-family: var(--mono);
+  font-size: 10px; color: var(--faint); white-space: nowrap;
+}
+
+/* ── tappable figures ───────────────────────────────────────────── */
+
+button.tile {
+  display: block; width: 100%; text-align: left;
+  font: inherit; color: inherit; cursor: pointer;
+}
+button.tile:active { filter: brightness(1.12); }
+
+.statrow {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px; width: 100%; padding: 0; margin: 0;
+  background: none; border: none; cursor: pointer;
+  font: inherit; color: inherit; text-align: left;
+}
+.statrow:active dd { color: var(--money); }
+.statlist > div:has(.statrow):hover { background: var(--surface-2); }
+.statlist > div { padding-inline: 4px; margin-inline: -4px; border-radius: 6px; }
+
+/* ── metric breakdown sheet ─────────────────────────────────────── */
+
+.metric-now { margin-bottom: 14px; }
+.metric-now .v {
+  font-family: var(--mono); font-size: 30px;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+}
+.metric-now .v.money { color: var(--money); }
+.metric-now .v.hours { color: var(--time); }
+.metric-now .k { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
