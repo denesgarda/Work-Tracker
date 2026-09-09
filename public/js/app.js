@@ -64,15 +64,40 @@ const ui = {
   insightsJob: '',
   insightsRange: 'd90',
   historyLimit: 60,
+  historyFrom: null,
+  historyTo: null,
+  dismissedLongShift: null,
 };
 
-function toast(msg, kind = 'ok') {
+function toast(msg, kind = 'ok', action = null) {
   const el = $('#toast');
-  el.textContent = msg;
+  el.textContent = '';
+  el.append(Object.assign(document.createElement('span'), { textContent: msg }));
+  if (action) {
+    const b = Object.assign(document.createElement('button'), { textContent: action.label, className: 'toast-action' });
+    b.addEventListener('click', () => { el.hidden = true; action.run(); });
+    el.append(b);
+  }
   el.dataset.kind = kind;
   el.hidden = false;
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.hidden = true; }, 3200);
+  el._t = setTimeout(() => { el.hidden = true; }, action ? 6000 : 3200);
+}
+
+/**
+ * Delete is one tap and there is no confirmation dialog in the way, so the
+ * safety net is an undo rather than a prompt. Restoring is just a put of the
+ * rows we captured before deleting.
+ */
+function deleteWithUndo(message, rows) {
+  store.mutate(rows.map(({ type, data }) => ({ type, op: 'delete', data: { id: data.id } })));
+  toast(message, 'ok', {
+    label: 'Undo',
+    run: () => {
+      store.mutate(rows.map(({ type, data }) => ({ type, op: 'put', data })));
+      toast('Restored');
+    },
+  });
 }
 
 // ── sheet ─────────────────────────────────────────────────────────
@@ -175,10 +200,36 @@ function renderClock() {
     brk.hidden = true;
   }
 
+  $('#punchcardEdit').disabled = !open;
+  renderLongShift(open, now);
   tick();
   renderTodayTiles(now);
   renderLedger($('#recentShifts'), recentEntries(6), { compact: true });
 }
+
+const LONG_SHIFT_MS = 12 * S.HOUR_MS;
+
+/**
+ * Forgetting to clock out is the likeliest way this data goes wrong, and it is
+ * silent. Surface it when you next open the app, while you can still remember
+ * when you actually stopped.
+ */
+function renderLongShift(open, now) {
+  const banner = $('#longShift');
+  const stale = open && !S.onBreak(open) && now - open.start_ms > LONG_SHIFT_MS && ui.dismissedLongShift !== open.id;
+  banner.hidden = !stale;
+  if (stale) {
+    $('#longShiftText').textContent =
+      `This shift has been running ${dur(now - open.start_ms)}. Did you forget to clock out?`;
+  }
+}
+
+$('#longShiftOut').addEventListener('click', () => clockOut());
+$('#longShiftFix').addEventListener('click', () => { const o = store.openShift; if (o) editShift(o); });
+$('#longShiftKeep').addEventListener('click', () => {
+  ui.dismissedLongShift = store.openShift?.id ?? null;
+  renderClock();
+});
 
 // Ticks the running clock without re-rendering the view, so the timer stays
 // smooth and never steals focus from anything.
@@ -210,18 +261,21 @@ function renderTodayTiles(now) {
 
 // ── ledger ────────────────────────────────────────────────────────
 
-function allEntries({ jobId = '', kind = 'all' } = {}) {
+function allEntries({ jobId = '', kind = 'all', from = null, to = null } = {}) {
   const d = store.data;
   const out = [];
+  const inSpan = (t) => (from === null || t >= from) && (to === null || t < to);
   if (kind !== 'payment') {
     for (const s of d.shifts) {
       if (jobId && s.job_id !== jobId) continue;
+      if (!inSpan(s.start_ms)) continue;
       out.push({ kind: 'shift', t: s.start_ms, row: s });
     }
   }
   if (kind !== 'shift') {
     for (const p of d.payments) {
       if (jobId && p.job_id !== jobId) continue;
+      if (!inSpan(p.paid_ms)) continue;
       out.push({ kind: 'payment', t: p.paid_ms, row: p });
     }
   }
@@ -295,7 +349,19 @@ function renderHistory() {
   fillJobSelect($('#historyJob'), ui.historyJob, 'All jobs');
   $$('#historyKind .seg-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.kind === ui.historyKind));
 
-  const all = allEntries({ jobId: ui.historyJob, kind: ui.historyKind });
+  const span = $('#historySpan');
+  if (ui.historyFrom !== null) {
+    const d = new Date(ui.historyFrom);
+    const sameMonth = new Date(ui.historyTo - 1).getMonth() === d.getMonth();
+    span.hidden = false;
+    span.querySelector('span').textContent = sameMonth
+      ? d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+      : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} onwards`;
+  } else {
+    span.hidden = true;
+  }
+
+  const all = allEntries({ jobId: ui.historyJob, kind: ui.historyKind, from: ui.historyFrom, to: ui.historyTo });
   const shown = all.slice(0, ui.historyLimit);
   renderLedger($('#historyList'), shown);
 
@@ -406,9 +472,8 @@ function editShift(shift) {
     });
 
     $('#f-del', root)?.addEventListener('click', () => {
-      store.mutate([{ type: 'shift', op: 'delete', data: { id: s.id } }]);
       closeSheet();
-      toast('Shift deleted');
+      deleteWithUndo('Shift deleted', [{ type: 'shift', data: s }]);
     });
   });
 }
@@ -476,9 +541,8 @@ function editPayment(payment) {
     });
 
     $('#f-del', root)?.addEventListener('click', () => {
-      store.mutate([{ type: 'payment', op: 'delete', data: { id: p.id } }]);
       closeSheet();
-      toast('Deposit deleted');
+      deleteWithUndo('Deposit deleted', [{ type: 'payment', data: p }]);
     });
   });
 }
@@ -536,14 +600,13 @@ function editJob(job) {
     });
 
     $('#f-del', root)?.addEventListener('click', () => {
-      if (!confirm(`Delete "${j.name}" and its ${counts.shifts} shift(s) and ${counts.payments} deposit(s)? This cannot be undone.`)) return;
+      if (!confirm(`Delete "${j.name}" and its ${counts.shifts} shift(s) and ${counts.payments} deposit(s)?`)) return;
       const d = store.data;
-      const ops = [{ type: 'job', op: 'delete', data: { id: j.id } }];
-      for (const s of d.shifts) if (s.job_id === j.id) ops.push({ type: 'shift', op: 'delete', data: { id: s.id } });
-      for (const p of d.payments) if (p.job_id === j.id) ops.push({ type: 'payment', op: 'delete', data: { id: p.id } });
-      store.mutate(ops);
+      const rows = [{ type: 'job', data: j }];
+      for (const sh of d.shifts) if (sh.job_id === j.id) rows.push({ type: 'shift', data: sh });
+      for (const pm of d.payments) if (pm.job_id === j.id) rows.push({ type: 'payment', data: pm });
       closeSheet();
-      toast('Job deleted');
+      deleteWithUndo(`Deleted "${j.name}"`, rows);
     });
   });
 }
@@ -560,30 +623,112 @@ function renderInsights() {
 
   const r = rs.find((x) => x.key === ui.insightsRange) || rs[3];
   const jobId = ui.insightsJob || null;
-  const s = S.summarize(store.data, { from: r.from, to: r.to, jobId, now, allowRate: r.allowRate });
+  const data = store.data;
+  const win = { from: r.from, to: r.to, jobId, now };
+  const s0 = S.summarize(data, { ...win, allowRate: r.allowRate });
 
-  const rateTile = s.rateCents !== null
+  // The same window immediately before this one, for change-over-time.
+  const prevWin = S.previousWindow(r);
+  const p0 = prevWin ? S.summarize(data, { from: prevWin.from, to: prevWin.to, jobId, now, allowRate: r.allowRate }) : null;
+  const since = prevWin ? `the previous ${prevWin.days} days` : null;
+
+  const delta = (cur, prev, fmt) => {
+    if (!since || cur == null || prev == null || prev === 0) return '';
+    const d = cur - prev;
+    if (Math.abs(d) < 0.0001) return `level with ${since}`;
+    return `${d > 0 ? 'up' : 'down'} ${fmt(Math.abs(d))} from ${since}`;
+  };
+
+  const rateTile = s0.rateCents !== null
     ? `<div class="tile lead">
          <div class="k">Effective rate — ${esc(r.label.toLowerCase())}</div>
-         <div class="v money">${money(s.rateCents)}<span style="font-size:15px;color:var(--muted)">/hr</span></div>
-         <div class="sub">${money(s.netRateCents)}/hr after the tax you set aside</div>
+         <div class="v money">${money(s0.rateCents)}<span class="unit">/hr</span></div>
+         <div class="sub">${money(s0.netRateCents)}/hr after tax${
+           p0 && p0.rateCents !== null ? ' · ' + delta(s0.rateCents, p0.rateCents, (v) => money(v)) : ''}</div>
        </div>`
     : `<div class="tile lead">
          <div class="k">Effective rate — ${esc(r.label.toLowerCase())}</div>
-         <div class="v none">${esc(rateExplanation(r, s))}</div>
+         <div class="v none">${esc(rateExplanation(r, s0))}</div>
        </div>`;
 
   $('#insightTiles').innerHTML = `
     ${rateTile}
-    <div class="tile"><div class="k">Hours</div><div class="v hours">${hours(s.hours)}</div>
-      <div class="sub">${s.shiftCount} shift${s.shiftCount === 1 ? '' : 's'}</div></div>
-    <div class="tile"><div class="k">Deposits</div><div class="v money">${money0(s.incomeCents)}</div>
-      <div class="sub">${s.paymentCount} payment${s.paymentCount === 1 ? '' : 's'}</div></div>
-    <div class="tile"><div class="k">Set aside for tax</div><div class="v">${money0(s.setAsideCents)}</div>
-      <div class="sub">${s.incomeCents ? ((s.setAsideCents / s.incomeCents) * 100).toFixed(0) + '% of deposits' : '—'}</div></div>
-    <div class="tile"><div class="k">Kept after tax</div><div class="v money">${money0(s.netCents)}</div></div>`;
+    <div class="tile"><div class="k">Hours</div><div class="v hours">${hours(s0.hours)}</div>
+      <div class="sub">${p0 ? esc(delta(s0.hours, p0.hours, (v) => hours(v))) : `${s0.shiftCount} shifts`}</div></div>
+    <div class="tile"><div class="k">Deposits</div><div class="v money">${money0(s0.incomeCents)}</div>
+      <div class="sub">${p0 ? esc(delta(s0.incomeCents, p0.incomeCents, (v) => money0(v))) : `${s0.paymentCount} payments`}</div></div>
+    <div class="tile"><div class="k">Kept after tax</div><div class="v money">${money0(s0.netCents)}</div>
+      <div class="sub">${s0.incomeCents ? ((s0.setAsideCents / s0.incomeCents) * 100).toFixed(0) + '% set aside' : '—'}</div></div>`;
 
-  renderCharts($('#charts'), store.data, { jobId, now });
+  const act = S.activityStats(data, win);
+  const dep = S.depositStats(data, win);
+  const pat = S.patternStats(data, win);
+
+  const hoursPer1k = s0.incomeCents > 0 ? s0.hours / (s0.incomeCents / 100000) : null;
+  const perWorkingDay = act.daysWorked ? s0.incomeCents / act.daysWorked : null;
+  const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const clockOf = (mins) => {
+    if (mins == null) return '—';
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`;
+  };
+  const pct = (x) => (x * 100).toFixed(0) + '%';
+
+  $('#statSections').innerHTML = `
+    <div class="card">
+      <h2 class="card-title">Money</h2>
+      ${statList([
+        ['Total received', dep.count ? money(dep.totalCents) : '—'],
+        ['Number of deposits', String(dep.count)],
+        ['Average deposit', dep.count ? money(dep.avgCents) : '—'],
+        ['Largest deposit', dep.count ? money(dep.largestCents) : '—'],
+        ['Hours per $1,000', hoursPer1k !== null ? hoursPer1k.toFixed(1) + 'h' : '—'],
+        ['Earned per day worked', perWorkingDay !== null ? money(perWorkingDay) : '—'],
+        ['Typical gap between deposits', dep.avgGapDays !== null ? Math.round(dep.avgGapDays) + ' days' : '—'],
+        ['Since your last deposit', dep.daysSinceLast !== null
+          ? `${dep.daysSinceLast} day${dep.daysSinceLast === 1 ? '' : 's'}` +
+            (dep.avgGapDays !== null && dep.daysSinceLast > dep.avgGapDays * 1.5 ? ' — longer than usual' : '')
+          : '—'],
+      ])}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Time</h2>
+      ${statList([
+        ['Days worked', act.spanDays ? `${act.daysWorked} of ${act.spanDays}` : String(act.daysWorked)],
+        ['Hours on a working day', act.daysWorked ? dur(act.avgMsPerWorkingDay) : '—'],
+        ['Average shift', act.shiftCount ? dur(act.avgShiftMs) : '—'],
+        ['Longest shift', act.longestShiftMs ? dur(act.longestShiftMs) : '—'],
+        ['Time on breaks', act.breakMs ? `${dur(act.breakMs)} · ${pct(act.breakPct)} of clocked time` : 'None logged'],
+      ])}
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Patterns</h2>
+      ${statList([
+        ['Busiest day', pat.busiestWeekday !== null ? DAYS[pat.busiestWeekday] : '—'],
+        ['Typical start', clockOf(pat.medianStartMinutes)],
+        ['Worked at weekends', pct(pat.weekendPct)],
+        ['Worked after 10pm', pct(pat.lateNightPct)],
+      ])}
+    </div>`;
+
+  renderCharts($('#charts'), data, {
+    jobId, now, from: r.from, to: r.to,
+    // Tapping a bar takes you to the entries behind it.
+    onDrill: (bucket) => {
+      ui.historyFrom = bucket.from;
+      ui.historyTo = bucket.to;
+      ui.historyJob = ui.insightsJob;
+      ui.historyLimit = 60;
+      switchTo('history');
+    },
+  });
+}
+
+function statList(rows) {
+  return '<dl class="statlist">' + rows.map(([k, v]) =>
+    `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('') + '</dl>';
 }
 
 // An empty rate should say why it is empty. "—" teaches nothing.
@@ -620,14 +765,23 @@ function download(name, text, type) {
 
 // ── wiring ────────────────────────────────────────────────────────
 
-$$('.tab').forEach((t) => t.addEventListener('click', () => {
-  ui.view = t.dataset.view;
-  $$('.tab').forEach((x) => x.classList.toggle('is-active', x === t));
-  $$('.view').forEach((v) => v.classList.toggle('is-active', v.dataset.view === ui.view));
+function switchTo(view) {
+  ui.view = view;
+  $$('.tab').forEach((x) => x.classList.toggle('is-active', x.dataset.view === view));
+  $$('.view').forEach((v) => v.classList.toggle('is-active', v.dataset.view === view));
+  window.scrollTo({ top: 0 });
   render();
-}));
+}
+$$('.tab').forEach((t) => t.addEventListener('click', () => switchTo(t.dataset.view)));
 
 $('#punchBtn').addEventListener('click', () => (store.openShift ? clockOut() : clockIn()));
+
+// Clocking in late is the common case; make fixing it one tap from here
+// rather than a trip through History.
+$('#punchcardEdit').addEventListener('click', () => {
+  const open = store.openShift;
+  if (open) editShift(open);
+});
 $('#breakBtn').addEventListener('click', toggleBreak);
 
 $('#jobRow').addEventListener('click', (e) => {
@@ -656,6 +810,11 @@ $('#jobList').addEventListener('click', (e) => {
 
 $('#historyJob').addEventListener('change', (e) => { ui.historyJob = e.target.value; ui.historyLimit = 60; renderHistory(); });
 $('#historyMore').addEventListener('click', () => { ui.historyLimit += 60; renderHistory(); });
+$('#historySpan').addEventListener('click', () => {
+  ui.historyFrom = ui.historyTo = null;
+  ui.historyLimit = 60;
+  renderHistory();
+});
 $('#historyKind').addEventListener('click', (e) => {
   const k = e.target.dataset.kind;
   if (!k) return;

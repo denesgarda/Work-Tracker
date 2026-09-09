@@ -369,8 +369,11 @@ main {
   .tab { flex: 0 0 auto; padding: 9px 16px; border-radius: 8px 8px 0 0; }
   .tab.is-active { background: var(--surface-2); }
   main { padding-bottom: 40px; }
-  .tiles { grid-template-columns: repeat(4, 1fr); }
-  .tile.lead { grid-column: span 2; }
+  /* Three across with the headline on its own row, so the remaining tiles
+     fill it exactly rather than leaving one stranded. */
+  .tiles { grid-template-columns: repeat(3, 1fr); }
+  .tile.lead { grid-column: 1 / -1; }
+  .tiles:not(.tiles-lead) { grid-template-columns: repeat(2, 1fr); }
   .toast { bottom: 24px; }
 }
 
@@ -409,3 +412,89 @@ main {
 }
 .field-row > .field { min-width: 0; }
 .breakrow .input { min-width: 0; }
+
+/* ── tappable clock face ────────────────────────────────────────── */
+
+.punch-tap {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; padding: 0; margin: 0;
+  color: inherit; font: inherit; cursor: pointer;
+  border-radius: 8px;
+}
+.punch-tap:disabled { cursor: default; }
+.punch-tap:not(:disabled):hover .elapsed { opacity: .85; }
+.punch-tap .elapsed, .punch-tap .elapsed-sub { display: block; }
+
+/* ── inline warning ─────────────────────────────────────────────── */
+
+.banner {
+  margin-top: 16px; padding: 13px 14px;
+  border: 1px solid var(--pause); border-radius: 10px;
+  background: rgba(201, 122, 61, .1);
+}
+.banner p { margin: 0 0 10px; font-size: 13.5px; }
+.banner .row-actions .btn { flex: 1 1 auto; }
+
+/* ── drill-through chip ─────────────────────────────────────────── */
+
+.chip-clear {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-bottom: 10px; padding: 6px 12px;
+  border: 1px solid var(--muted); border-radius: 999px;
+  background: var(--surface-2); color: var(--text);
+  font-family: var(--sans); font-size: 12.5px; cursor: pointer;
+}
+.chip-clear span { color: var(--text); font-weight: 550; }
+
+/* ── stat lists ─────────────────────────────────────────────────── */
+
+.statlist { margin: 10px 0 0; display: flex; flex-direction: column; }
+.statlist > div {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding: 9px 0; border-bottom: 1px solid var(--line);
+}
+.statlist > div:last-child { border-bottom: none; }
+.statlist dt { font-size: 13.5px; color: var(--muted); }
+.statlist dd {
+  margin: 0; font-family: var(--mono); font-size: 14px;
+  font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
+}
+
+/* ── chart header + per-chart controls ──────────────────────────── */
+
+.chart-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px;
+}
+.chart-head .card-title { margin-bottom: 2px; }
+.chart-head .chart-note { margin-bottom: 0; }
+
+.chart-ctrl {
+  display: flex; flex: none; gap: 2px; padding: 2px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+}
+.chart-ctrl button {
+  border: none; background: none; color: var(--muted);
+  font-family: var(--sans); font-size: 11.5px; padding: 5px 9px;
+  border-radius: 6px; cursor: pointer; white-space: nowrap;
+}
+.chart-ctrl button.is-active { background: var(--surface-3); color: var(--text); }
+
+.legend i.tick { width: 2px; height: 11px; border-radius: 1px; }
+
+.tile .v .unit { font-size: 15px; color: var(--muted); }
+
+/* ── toast action ───────────────────────────────────────────────── */
+
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast-action {
+  background: none; border: none; padding: 0;
+  color: var(--on); font-family: var(--sans); font-size: 13.5px;
+  font-weight: 600; cursor: pointer; text-decoration: underline;
+  flex: none;
+}
+
+@media (max-width: 520px) {
+  .chart-head { flex-direction: column; gap: 8px; }
+  .chart-ctrl { align-self: flex-start; }
+}

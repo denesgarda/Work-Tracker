@@ -264,3 +264,182 @@ function firstActivity(data, jobId) {
   for (const p of data.payments) if (!jobId || p.job_id === jobId) min = Math.min(min, p.paid_ms);
   return Number.isFinite(min) ? min : null;
 }
+
+// ── richer insight metrics ────────────────────────────────────────
+// All of these are derived from shifts and deposits alone. Nothing here asks
+// for a single extra keystroke of bookkeeping.
+
+/** Worked ms per local day inside a window. Map<dayStartMs, ms>. */
+export function dailyWorkedMs(data, { from, to, jobId = null, now = Date.now() }) {
+  const map = new Map();
+  for (const s of data.shifts) {
+    if (jobId && s.job_id !== jobId) continue;
+    const end = Math.min(s.end_ms ?? now, to);
+    const start = Math.max(s.start_ms, from);
+    if (end <= start) continue;
+    for (let t = startOfDay(start); t < end; t = addDays(t, 1)) {
+      const ms = workedMsInWindow(s, Math.max(t, from), Math.min(addDays(t, 1), to), now);
+      if (ms > 0) map.set(t, (map.get(t) || 0) + ms);
+    }
+  }
+  return map;
+}
+
+/**
+ * The equivalent window immediately before this one, for change-over-time.
+ * Same duration rather than the same calendar unit: it is the comparison that
+ * stays honest for a part-finished month.
+ */
+export function previousWindow({ from, to }) {
+  if (!Number.isFinite(from)) return null;   // "all time" has nothing before it
+  const span = to - from;
+  return { from: from - span, to: from, days: Math.max(1, Math.round(span / DAY_MS)) };
+}
+
+/** Time-shaped stats: how the hours were actually distributed. */
+export function activityStats(data, { from, to, jobId = null, now = Date.now() }) {
+  const daily = dailyWorkedMs(data, { from, to, jobId, now });
+  let workedMs = 0;
+  for (const ms of daily.values()) workedMs += ms;
+
+  let breakMs = 0, longestMs = 0, shiftCount = 0, shiftMsTotal = 0;
+  for (const s of data.shifts) {
+    if (jobId && s.job_id !== jobId) continue;
+    if (workedMsInWindow(s, from, to, now) <= 0) continue;
+    shiftCount++;
+    const w = shiftWorkedMs(s, now);
+    shiftMsTotal += w;
+    if (w > longestMs) longestMs = w;
+    breakMs += shiftBreakMs(s, now);
+  }
+
+  const spanDays = Number.isFinite(from)
+    ? Math.max(1, Math.round((Math.min(to, now + DAY_MS) - from) / DAY_MS))
+    : null;
+
+  return {
+    workedMs,
+    daysWorked: daily.size,
+    spanDays,
+    avgMsPerWorkingDay: daily.size ? workedMs / daily.size : 0,
+    avgShiftMs: shiftCount ? shiftMsTotal / shiftCount : 0,
+    longestShiftMs: longestMs,
+    breakMs,
+    breakPct: workedMs + breakMs > 0 ? breakMs / (workedMs + breakMs) : 0,
+    shiftCount,
+  };
+}
+
+/** Money-shaped stats: the rhythm and size of what lands. */
+export function depositStats(data, { from, to, jobId = null, now = Date.now() }) {
+  const inWindow = data.payments
+    .filter((p) => (!jobId || p.job_id === jobId) && p.paid_ms >= from && p.paid_ms < to)
+    .sort((a, b) => a.paid_ms - b.paid_ms);
+
+  let total = 0, largest = 0;
+  for (const p of inWindow) { total += p.amount_cents; largest = Math.max(largest, p.amount_cents); }
+
+  let gapSum = 0;
+  for (let i = 1; i < inWindow.length; i++) gapSum += inWindow[i].paid_ms - inWindow[i - 1].paid_ms;
+
+  // "Days since last" looks at every deposit, not just this window — otherwise
+  // a short window would report a misleading silence.
+  const everySorted = data.payments
+    .filter((p) => !jobId || p.job_id === jobId)
+    .sort((a, b) => b.paid_ms - a.paid_ms);
+  const last = everySorted[0];
+
+  return {
+    count: inWindow.length,
+    totalCents: total,
+    avgCents: inWindow.length ? total / inWindow.length : 0,
+    largestCents: largest,
+    avgGapDays: inWindow.length > 1 ? gapSum / (inWindow.length - 1) / DAY_MS : null,
+    daysSinceLast: last ? Math.floor((now - last.paid_ms) / DAY_MS) : null,
+  };
+}
+
+/** When the work happens, rather than how much of it there is. */
+export function patternStats(data, { from, to, jobId = null, now = Date.now() }) {
+  const byWeekday = new Array(7).fill(0);
+  const starts = [];
+  let weekendMs = 0, lateMs = 0, total = 0;
+
+  for (const s of data.shifts) {
+    if (jobId && s.job_id !== jobId) continue;
+    const ms = workedMsInWindow(s, from, to, now);
+    if (ms <= 0) continue;
+    const d = new Date(s.start_ms);
+    const dow = (d.getDay() + 6) % 7;          // 0 = Monday
+    byWeekday[dow] += ms;
+    starts.push(d.getHours() * 60 + d.getMinutes());
+    total += ms;
+    if (dow >= 5) weekendMs += ms;
+    const h = d.getHours();
+    if (h >= 22 || h < 5) lateMs += ms;
+  }
+
+  starts.sort((a, b) => a - b);
+  const median = starts.length ? starts[Math.floor(starts.length / 2)] : null;
+  let busiest = -1;
+  for (let i = 0; i < 7; i++) if (byWeekday[i] > (byWeekday[busiest] ?? -1)) busiest = i;
+
+  return {
+    byWeekday,
+    busiestWeekday: total > 0 ? busiest : null,
+    medianStartMinutes: median,
+    weekendPct: total ? weekendMs / total : 0,
+    lateNightPct: total ? lateMs / total : 0,
+  };
+}
+
+const LENGTH_BUCKETS = [
+  { label: '<1h', min: 0, max: 1 },
+  { label: '1–2h', min: 1, max: 2 },
+  { label: '2–3h', min: 2, max: 3 },
+  { label: '3–4h', min: 3, max: 4 },
+  { label: '4–6h', min: 4, max: 6 },
+  { label: '6–8h', min: 6, max: 8 },
+  { label: '8h+', min: 8, max: Infinity },
+];
+
+/** How long a typical session runs. */
+export function shiftLengthHistogram(data, { from, to, jobId = null, now = Date.now() }) {
+  const out = LENGTH_BUCKETS.map((b) => ({ ...b, count: 0 }));
+  for (const s of data.shifts) {
+    if (jobId && s.job_id !== jobId) continue;
+    if (workedMsInWindow(s, from, to, now) <= 0) continue;
+    const h = shiftWorkedMs(s, now) / HOUR_MS;
+    const b = out.find((x) => h >= x.min && h < x.max);
+    if (b) b.count++;
+  }
+  return out;
+}
+
+/** Cumulative earnings plotted against cumulative hours: the slope is the rate. */
+export function cumulativeByHours(data, { jobId = null, now = Date.now(), stepDays = 7 }) {
+  const first = firstActivityAt(data, jobId);
+  if (first === null) return [];
+  const out = [];
+  const end = startOfDay(now) + DAY_MS;
+  for (let t = addDays(startOfDay(first), stepDays); t <= end; t = addDays(t, stepDays)) {
+    const s = summarize(data, { from: -8640000000000000, to: t, jobId, now, allowRate: false });
+    out.push({ t, hours: s.hours, incomeCents: s.incomeCents, netCents: s.netCents });
+  }
+  return out;
+}
+
+/** Deposit events inside a span, for marking on a time axis. */
+export function depositEvents(data, { from, to, jobId = null }) {
+  return data.payments
+    .filter((p) => (!jobId || p.job_id === jobId) && p.paid_ms >= from && p.paid_ms < to)
+    .map((p) => ({ t: p.paid_ms, cents: p.amount_cents }))
+    .sort((a, b) => a.t - b.t);
+}
+
+function firstActivityAt(data, jobId) {
+  let min = Infinity;
+  for (const s of data.shifts) if (!jobId || s.job_id === jobId) min = Math.min(min, s.start_ms);
+  for (const p of data.payments) if (!jobId || p.job_id === jobId) min = Math.min(min, p.paid_ms);
+  return Number.isFinite(min) ? min : null;
+}

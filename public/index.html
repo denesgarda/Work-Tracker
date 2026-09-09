@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Work Tracker</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
@@ -42,8 +45,19 @@
           <span class="statusline-since" id="clockSince"></span>
         </div>
 
-        <div class="elapsed is-idle" id="elapsed">0:00:00</div>
-        <div class="elapsed-sub" id="elapsedSub">Not on the clock</div>
+        <button class="punch-tap" id="punchcardEdit" type="button" disabled>
+          <span class="elapsed is-idle" id="elapsed">0:00:00</span>
+          <span class="elapsed-sub" id="elapsedSub">Not on the clock</span>
+        </button>
+
+        <div class="banner" id="longShift" hidden>
+          <p id="longShiftText"></p>
+          <div class="row-actions">
+            <button class="btn btn-quiet" id="longShiftOut" type="button">Clock out now</button>
+            <button class="btn btn-quiet" id="longShiftFix" type="button">Pick a time</button>
+            <button class="btn btn-quiet" id="longShiftKeep" type="button">Still working</button>
+          </div>
+        </div>
 
         <div class="punch-actions">
           <button class="btn btn-primary" id="punchBtn" type="button">Clock in</button>
@@ -73,6 +87,9 @@
         <button class="btn btn-quiet" id="addShiftBtn" type="button">Add a past shift</button>
         <button class="btn btn-quiet" id="addPaymentBtn" type="button">Log a deposit</button>
       </div>
+      <button class="chip-clear" id="historySpan" type="button" hidden>
+        Showing <span></span> &times;
+      </button>
       <div id="historyList" class="ledger ledger-full"></div>
       <button class="btn btn-quiet btn-block" id="historyMore" type="button" style="margin-top:10px" hidden></button>
     </section>
@@ -84,6 +101,7 @@
         <select id="insightsRange" class="select" aria-label="Time window"></select>
       </div>
       <div class="tiles tiles-lead" id="insightTiles"></div>
+      <div id="statSections"></div>
       <div id="charts"></div>
     </section>
 
