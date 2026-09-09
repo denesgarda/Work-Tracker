@@ -595,11 +595,13 @@ export function renderMetricChart(el, ctx) {
   bindBlock(el, ctx);
 }
 
+// Kept uniformly short: this sits beside the block selector, and a longer
+// string here used to reflow and shove the selector onto the next line.
 function blockNote(series, rangeDays) {
   const b = series?.block;
-  if (b === 'range') return `One block per ${rangeDays} days, so you compare like with like.`;
-  return { week: 'One block per week.', month: 'One block per month.',
-           quarter: 'One block per quarter.', year: 'One block per calendar year.' }[b] || '';
+  if (b === 'range') return `One block per ${rangeDays} days`;
+  return { week: 'One block per week', month: 'One block per month',
+           quarter: 'One block per quarter', year: 'One block per year' }[b] || '';
 }
 
 function bindBlock(el, ctx) {

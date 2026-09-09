@@ -555,11 +555,14 @@ button.tile:active { filter: brightness(1.12); }
 .ctrl-row { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .ctrl-label { font-size: 11px; color: var(--faint); white-space: nowrap; }
 
+/* No wrapping: the selector holds its place and the note text reflows within
+   whatever space is left, rather than pushing the selector to a new line. */
 .metric-head {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
+  gap: 12px; margin-bottom: 10px; flex-wrap: nowrap;
 }
-.metric-head .chart-note { margin: 0; flex: 1 1 auto; }
+.metric-head .chart-note { margin: 0; flex: 1 1 0; min-width: 0; }
+.metric-head .chart-ctrl { flex: 0 0 auto; }
 
 @media (max-width: 520px) {
   .ctrl-stack { width: 100%; }
