@@ -381,7 +381,11 @@ main {
 
 .chart-note { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; max-width: 60ch; }
 .chart-hold { position: relative; }
-.chart svg { display: block; overflow: visible; touch-action: pan-y; }
+.chart svg { display: block; overflow: visible; }
+/* These plots scroll horizontally, so the browser must be allowed to pan on
+   both axes; taps are distinguished from drags in JS instead. */
+.chart-scroll { touch-action: pan-x pan-y; }
+.chart .hit { cursor: default; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -497,6 +501,10 @@ main {
 @media (max-width: 520px) {
   .chart-head { flex-direction: column; gap: 8px; }
   .chart-ctrl { align-self: flex-start; }
+  .chart-ctrl button { padding: 8px 12px; font-size: 12.5px; }
+  .tip { font-size: 12.5px; padding: 9px 12px; }
+  .card.chart { padding-inline: 12px; }
+  .chart-axis span { font-size: 9.5px; }
 }
 
 /* ── scrolling plots with a pinned value axis ───────────────────── */

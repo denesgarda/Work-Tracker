@@ -19,7 +19,11 @@ const GRID = '#3a3733';
 const INK = '#9b958a';
 const FAINT = '#6f6a61';
 const SURFACE = '#24221f';
-const CARD_PAD = 18;   // matches --pad in app.css
+const cardPad = (w) => (w < 520 ? 12 : 18);   // matches .card / .card.chart in app.css
+// A phone has vertical room to spare (you are scrolling anyway) and very
+// little horizontal room, so charts get taller and the axis gutter narrower.
+const isCompact = (w) => w < 520;
+const axisWidth = (w) => (isCompact(w) ? 44 : 54);
 
 const money0 = (c) => '$' + Math.round(c / 100).toLocaleString();
 const money2 = (c) => '$' + (c / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -90,10 +94,11 @@ function rateChart(data, { jobId, now, width }) {
       empty('Not enough history yet.'), { controls }) };
   }
 
-  const AXIS_W = 54;
+  const compact = isCompact(width);
+  const AXIS_W = axisWidth(width);
   const pad = { t: 14, r: 18, b: 30, l: 20 };
-  const h = 196;
-  const avail = Math.max(220, width - AXIS_W - CARD_PAD * 2);
+  const h = compact ? 250 : 196;
+  const avail = Math.max(220, width - AXIS_W - cardPad(width) * 2);
   const t0 = series[0].t, t1 = series[series.length - 1].t;
   const totalDays = Math.max(1, (t1 - t0) / S.DAY_MS);
   const viewDays = opts.rateView === 'all' ? totalDays : Number(opts.rateView);
@@ -171,14 +176,15 @@ function barChart(buckets, { width, title, note, color, value, format, unit, con
   const vals = buckets.map(value);
   if (!vals.some((v) => v > 0)) return { html: card(title, note, empty('Nothing logged yet.'), { controls }) };
 
-  const AXIS_W = 54;
-  const MIN_SLOT = 26;
+  const compact = isCompact(width);
+  const AXIS_W = axisWidth(width);
+  const MIN_SLOT = compact ? 34 : 26;
   // Generous side padding so an edge label is never clipped by the scroller.
   const pad = { t: 12, r: 18, b: 24, l: 20 };
-  const h = 168;
+  const h = compact ? 215 : 168;
   // The measured width is the card's outer box; its own padding is not
   // available to the plot, so subtract it or the plot always overflows.
-  const avail = Math.max(200, width - AXIS_W - CARD_PAD * 2);
+  const avail = Math.max(200, width - AXIS_W - cardPad(width) * 2);
   // Wide enough to show every bucket legibly; the container scrolls if that
   // exceeds the space available.
   const contentW = Math.max(avail, buckets.length * MIN_SLOT + pad.l + pad.r);
@@ -197,6 +203,12 @@ function barChart(buckets, { width, title, note, color, value, format, unit, con
       rx="4" fill="${color}" opacity="${v > 0 ? 1 : 0.25}"/>`;
   }).join('');
 
+  // A thin bar is a poor touch target, so each bucket carries a full-height
+  // transparent rect the width of its slot.
+  const hits = buckets.map((b, i) =>
+    `<rect class="hit" data-i="${i}" x="${(pad.l + slot * i).toFixed(1)}" y="${pad.t}"
+       width="${slot.toFixed(1)}" height="${innerH}" fill="transparent"/>`).join('');
+
   const every = slot < 34 ? Math.ceil(34 / slot) : 1;
   const n = buckets.length;
   const labels = buckets.map((b, i) => ((n - 1 - i) % every === 0)
@@ -205,7 +217,7 @@ function barChart(buckets, { width, title, note, color, value, format, unit, con
   const svg = `<svg viewBox="0 0 ${contentW} ${h}" width="${contentW}" height="${h}" role="img"
       aria-label="${esc(title)}: most recent ${esc(format(value(buckets[n - 1])))} ${esc(unit)}">
     ${[0, max / 2, max].map((v) => `<line x1="${pad.l}" x2="${pad.l + innerW}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`).join('')}
-    ${bars}${labels}</svg>`;
+    ${bars}${labels}${hits}</svg>`;
 
   const axis = [0, max / 2, max].map((v) =>
     `<span style="top:${(y(v) - 7).toFixed(1)}px">${esc(format(v))}</span>`).join('');
@@ -249,8 +261,9 @@ function cumulativeChart(data, { jobId, now, width }) {
     return { html: card(title, note, empty('Not enough history yet.')) };
   }
 
+  const compact = isCompact(width);
   const pad = { t: 14, r: 56, b: 28, l: 8 };
-  const h = 200;
+  const h = compact ? 250 : 200;
   const inner = { w: width - pad.l - pad.r, h: h - pad.t - pad.b };
   const last = series[series.length - 1];
   const maxH = niceMax(last.hours * 1.05);
@@ -301,7 +314,7 @@ function lengthChart(data, { jobId, now, from, to, width }) {
   if (!buckets.some((b) => b.count > 0)) return { html: card(title, '', empty('Nothing logged yet.')) };
 
   const pad = { t: 10, r: 8, b: 30, l: 8 };
-  const h = 132;
+  const h = isCompact(width) ? 176 : 132;
   const inner = { w: width - pad.l - pad.r, h: h - pad.t - pad.b };
   const max = Math.max(...buckets.map((b) => b.count));
   const slot = inner.w / buckets.length;
@@ -337,7 +350,7 @@ function patternChart(data, { jobId, now, width }) {
   if (max <= 0) return { html: card(title, '', empty('Nothing logged yet.'), { controls }) };
 
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const padL = 30, padT = 12, padB = 18, ch = 15;
+  const padL = 28, padT = 12, padB = 18, ch = isCompact(width) ? 20 : 15;
   const cw = (width - padL - 4) / 24;
   const h = padT + ch * 7 + padB;
 
@@ -367,14 +380,17 @@ function patternChart(data, { jobId, now, width }) {
 }
 
 // ── interaction ───────────────────────────────────────────────────
+// Touch and mouse want different things here. A mouse hovers, so the crosshair
+// should follow it. A finger drags to SCROLL — these plots sit inside a
+// horizontal scroller — so a drag must be left alone and only a tap should
+// move the crosshair. Listening for pointermove regardless fought the scroll
+// gesture, and pointerenter/pointerleave barely fire on touch at all.
 
 const tipFor = (root) => {
   const svg = root.querySelector('svg');
   return {
     svg,
     tip: root.querySelector('.tip'),
-    // Inside a scroller the tip is positioned in content coordinates, so it
-    // must be clamped to the content width rather than the visible width.
     bound: root.querySelector('.chart-scroll') ? svg.getBBox?.().width || svg.clientWidth
                                                : root.querySelector('.chart-hold').clientWidth,
   };
@@ -386,16 +402,57 @@ function place(bound, tip, px, py) {
   tip.style.transform = `translate(${Math.max(4, Math.min(Math.max(w + 8, bound) - w - 4, px - w / 2))}px, ${Math.max(0, py - tip.offsetHeight - 12)}px)`;
 }
 
+const TAP_SLOP = 10;   // px of movement still counted as a tap, not a drag
+
+/**
+ * Drilling swaps the whole view out from under the finger, and the tap's
+ * trailing click would then land on whatever now occupies that spot — opening
+ * a shift editor, say. Swallow exactly one click first.
+ */
+function swallowNextClick() {
+  const eat = (e) => { e.stopPropagation(); e.preventDefault(); };
+  document.addEventListener('click', eat, { capture: true, once: true });
+  setTimeout(() => document.removeEventListener('click', eat, { capture: true }), 500);
+}
+
+/**
+ * Calls onTap(clientX, clientY) for a tap, and leaves drags entirely to the
+ * browser so the container can scroll.
+ */
+function onTapOrHover(el, { onTap, onHover, onLeave }) {
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') { onTap(e.clientX, e.clientY); return; }
+    el._x = e.clientX; el._y = e.clientY; el._moved = false;
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse') { onHover?.(e.clientX, e.clientY); return; }
+    if (el._x != null && Math.hypot(e.clientX - el._x, e.clientY - el._y) > TAP_SLOP) el._moved = true;
+  });
+  el.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'mouse') return;
+    if (!el._moved) {
+      // Suppress the synthetic mouse events this touch would otherwise
+      // generate, so a tap acts once and only on what was tapped.
+      e.preventDefault();
+      onTap(e.clientX, e.clientY);
+    }
+    el._x = null;
+  });
+  el.addEventListener('pointercancel', () => { el._x = null; });
+  if (onLeave) el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') onLeave(); });
+}
+
 function wireCrosshair(root, points, render) {
   const { svg, tip, bound } = tipFor(root);
   const capture = svg.querySelector('.capture');
   const hover = svg.querySelector('.hover');
   const cross = svg.querySelector('.cross');
   const dot = svg.querySelector('.dot');
-  const move = (e) => {
+
+  const showAt = (clientX) => {
     const r = svg.getBoundingClientRect();
     const scale = svg.viewBox.baseVal.width / r.width;
-    const mx = (e.clientX - r.left) * scale;
+    const mx = (clientX - r.left) * scale;
     let best = points[0];
     for (const p of points) if (Math.abs(p.x - mx) < Math.abs(best.x - mx)) best = p;
     hover.removeAttribute('hidden');
@@ -404,29 +461,52 @@ function wireCrosshair(root, points, render) {
     tip.innerHTML = render(best);
     place(bound, tip, best.x / scale, best.y / scale);
   };
-  capture.addEventListener('pointermove', move);
-  capture.addEventListener('pointerdown', move);
-  svg.addEventListener('pointerleave', () => { hover.setAttribute('hidden', ''); tip.hidden = true; });
+  const hide = () => { hover.setAttribute('hidden', ''); tip.hidden = true; };
+
+  onTapOrHover(capture, { onTap: showAt, onHover: showAt, onLeave: hide });
 }
 
 function wireBars(root, buckets, render, drill) {
   const { svg, tip, bound } = tipFor(root);
-  svg.querySelectorAll('.bar').forEach((bar) => {
-    const b = buckets[+bar.dataset.i];
-    if (drill) bar.style.cursor = 'pointer';
+  const targets = svg.querySelectorAll('.hit').length
+    ? svg.querySelectorAll('.hit') : svg.querySelectorAll('.bar');
+  let active = null;
+
+  const clear = () => {
+    svg.querySelectorAll('.bar').forEach((b) => { b.style.filter = ''; });
+    tip.hidden = true;
+    active = null;
+  };
+
+  targets.forEach((target) => {
+    const i = +target.dataset.i;
+    const bar = svg.querySelector(`.bar[data-i="${i}"]`);
+    if (drill) target.style.cursor = 'pointer';
+
     const show = () => {
       const r = svg.getBoundingClientRect();
       const scale = svg.viewBox.baseVal.width / r.width;
-      tip.innerHTML = render(b);
-      place(bound, tip, (+bar.getAttribute('x') + +bar.getAttribute('width') / 2) / scale, +bar.getAttribute('y') / scale);
-      bar.style.filter = 'brightness(1.25)';
+      tip.innerHTML = render(buckets[i]);
+      place(bound, tip, (+bar.getAttribute('x') + +bar.getAttribute('width') / 2) / scale,
+            +bar.getAttribute('y') / scale);
+      svg.querySelectorAll('.bar').forEach((b) => { b.style.filter = ''; });
+      bar.style.filter = 'brightness(1.3)';
+      active = i;
     };
-    bar.addEventListener('pointerenter', show);
-    bar.addEventListener('pointerdown', show);
-    bar.addEventListener('pointerleave', () => { tip.hidden = true; bar.style.filter = ''; });
-    if (drill) bar.addEventListener('click', () => drill(b));
+
+    onTapOrHover(target, {
+      onHover: () => { if (active !== i) show(); },
+      onTap: () => {
+        // On a mouse, the tooltip is already up from hovering, so a click
+        // drills. On touch there is no hover, so the first tap reveals and a
+        // second tap on the same bar drills.
+        if (drill && active === i) { clear(); swallowNextClick(); drill(buckets[i]); }
+        else show();
+      },
+    });
   });
-  svg.addEventListener('pointerleave', () => { tip.hidden = true; });
+
+  svg.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') clear(); });
 }
 
 function wireCells(root, days) {
@@ -443,12 +523,12 @@ function wireCells(root, days) {
         const hr = +cell.dataset.h;
         tip.innerHTML = `<b>${days[+cell.dataset.d]} ${hr === 0 ? '12am' : hr === 12 ? '12pm' : hr > 12 ? hr - 12 + 'pm' : hr + 'am'}</b><span>${v.toFixed(1)}h logged</span>`;
       }
-      place(bound, tip, (+cell.getAttribute('x') + +cell.getAttribute('width') / 2) / scale, +cell.getAttribute('y') / scale);
+      place(bound, tip, (+cell.getAttribute('x') + +cell.getAttribute('width') / 2) / scale,
+            +cell.getAttribute('y') / scale);
     };
-    cell.addEventListener('pointerenter', show);
-    cell.addEventListener('pointerdown', show);
+    onTapOrHover(cell, { onTap: show, onHover: show });
   });
-  svg.addEventListener('pointerleave', () => { tip.hidden = true; });
+  svg.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') tip.hidden = true; });
 }
 
 // ── entry point ───────────────────────────────────────────────────
@@ -549,10 +629,12 @@ export function renderMetricChart(el, ctx) {
     return;
   }
 
-  const AXIS_W = 58, MIN_SLOT = 46;
+  const elW = el.clientWidth || 320;
+  const compact = isCompact(elW);
+  const AXIS_W = axisWidth(elW), MIN_SLOT = 50;
   const pad = { t: 14, r: 18, b: 34, l: 20 };
-  const h = 200;
-  const avail = Math.max(200, (el.clientWidth || 320) - AXIS_W);
+  const h = compact ? 240 : 200;
+  const avail = Math.max(200, elW - AXIS_W);
   const contentW = Math.max(avail, pts.length * MIN_SLOT + pad.l + pad.r);
   const innerW = contentW - pad.l - pad.r;
   const innerH = h - pad.t - pad.b;
@@ -575,13 +657,17 @@ export function renderMetricChart(el, ctx) {
       ${showValues ? `<text x="${cx.toFixed(1)}" y="${h - 6}" fill="${i === last ? INK : FAINT}" font-size="10" text-anchor="middle">${esc(format(p.value))}</text>` : ''}`;
   }).join('');
 
+  const hits = pts.map((p, i) =>
+    `<rect class="hit" data-i="${i}" x="${(pad.l + slot * i).toFixed(1)}" y="${pad.t}"
+       width="${slot.toFixed(1)}" height="${innerH}" fill="transparent"/>`).join('');
+
   el.innerHTML = head + `
     <div class="chart-hold is-scrolling">
       <div class="chart-scroll">
         <svg viewBox="0 0 ${contentW} ${h}" width="${contentW}" height="${h}" role="img"
              aria-label="${esc(series.metric.label)} by ${esc(series.block)}">
           ${[0, max / 2, max].map((v) => `<line x1="${pad.l}" x2="${pad.l + innerW}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`).join('')}
-          ${bars}
+          ${bars}${hits}
         </svg>
         <div class="tip" hidden></div>
       </div>
