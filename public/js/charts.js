@@ -35,7 +35,7 @@ function niceMax(v) {
 
 // ── chart options, remembered between visits ──────────────────────
 
-const DEFAULTS = { roll: 90, bucket: 'month', heat: 180 };
+const DEFAULTS = { roll: 90, bucket: 'month', heat: 180, rateView: 'all', block: 'range' };
 let opts = { ...DEFAULTS };
 try { opts = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('wt.charts') || '{}') }; } catch {}
 const setOpt = (k, v) => {
@@ -73,7 +73,14 @@ const empty = (msg) => `<p class="empty">${esc(msg)}</p>`;
 
 function rateChart(data, { jobId, now, width }) {
   const win = opts.roll;
-  const controls = seg('roll', [[30, '30d'], [60, '60d'], [90, '90d']]);
+  // Two independent controls: how the rate is computed, and how much of the
+  // history is on screen at once. The second one is what makes it scrollable.
+  const controls =
+    `<div class="ctrl-stack">
+       <div class="ctrl-row"><span class="ctrl-label">Averaged over</span>${seg('roll', [[30, '30d'], [60, '60d'], [90, '90d']])}</div>
+       <div class="ctrl-row"><span class="ctrl-label">Showing</span>${seg('rateView', [[90, '3m'], [180, '6m'], [365, '1y'], ['all', 'All']])}</div>
+     </div>`;
+
   const series = S.rollingRateSeries(data, { windowDays: win, stepDays: 7, jobId, now })
     .filter((p) => p.rateCents !== null);
 
@@ -83,43 +90,58 @@ function rateChart(data, { jobId, now, width }) {
       empty('Not enough history yet.'), { controls }) };
   }
 
-  const pad = { t: 14, r: 58, b: 30, l: 8 };
+  const AXIS_W = 54;
+  const pad = { t: 14, r: 18, b: 30, l: 20 };
   const h = 196;
-  const inner = { w: width - pad.l - pad.r, h: h - pad.t - pad.b };
-  const max = niceMax(Math.max(...series.map((p) => p.rateCents)) * 1.12);
+  const avail = Math.max(220, width - AXIS_W - CARD_PAD * 2);
   const t0 = series[0].t, t1 = series[series.length - 1].t;
-  const x = (t) => pad.l + ((t - t0) / Math.max(1, t1 - t0)) * inner.w;
-  const y = (c) => pad.t + inner.h - (c / max) * inner.h;
+  const totalDays = Math.max(1, (t1 - t0) / S.DAY_MS);
+  const viewDays = opts.rateView === 'all' ? totalDays : Number(opts.rateView);
+  // Stretch the canvas so the chosen span fills the visible area; the rest
+  // overflows and scrolls.
+  const contentW = Math.min(20000, Math.round(avail * Math.max(1, totalDays / viewDays)));
+  const innerW = contentW - pad.l - pad.r;
+  const innerH = h - pad.t - pad.b;
+
+  const max = niceMax(Math.max(...series.map((p) => p.rateCents)) * 1.12);
+  const x = (t) => pad.l + ((t - t0) / Math.max(1, t1 - t0)) * innerW;
+  const y = (c) => pad.t + innerH - (c / max) * innerH;
 
   const line = (key) => series.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p[key]).toFixed(1)}`).join('');
   const band = series.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.rateCents).toFixed(1)}`).join('') +
     series.slice().reverse().map((p) => `L${x(p.t).toFixed(1)},${y(p.netRateCents).toFixed(1)}`).join('') + 'Z';
 
-  // Deposits are what move this line. Marking them turns a jump into a cause.
   const marks = S.depositEvents(data, { from: t0, to: t1 + 1, jobId })
     .map((d) => `<line x1="${x(d.t).toFixed(1)}" x2="${x(d.t).toFixed(1)}"
-       y1="${pad.t + inner.h}" y2="${pad.t + inner.h + 5}" stroke="${MONEY}" stroke-width="1.5" opacity=".55"/>`).join('');
+       y1="${pad.t + innerH}" y2="${pad.t + innerH + 5}" stroke="${MONEY}" stroke-width="1.5" opacity=".55"/>`).join('');
+
+  // A date roughly every 110px, so the axis stays populated at any zoom.
+  const ticks = Math.max(2, Math.round(innerW / 110));
+  const dateLabels = Array.from({ length: ticks + 1 }, (_, i) => {
+    const t = t0 + ((t1 - t0) * i) / ticks;
+    const anchor = i === 0 ? 'start' : i === ticks ? 'end' : 'middle';
+    return `<text x="${x(t).toFixed(1)}" y="${h - 8}" fill="${FAINT}" font-size="10" text-anchor="${anchor}">${esc(dateLabel(t))}</text>`;
+  }).join('');
 
   const last = series[series.length - 1];
   const svg = `
-  <svg viewBox="0 0 ${width} ${h}" width="100%" height="${h}" role="img"
+  <svg viewBox="0 0 ${contentW} ${h}" width="${contentW}" height="${h}" role="img"
        aria-label="Rolling ${win}-day effective rate, currently ${money2(last.rateCents)} per hour">
-    ${[0, max / 2, max].map((v) => `
-      <line x1="${pad.l}" x2="${pad.l + inner.w}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>
-      <text x="${pad.l + inner.w + 6}" y="${(y(v) + 3.5).toFixed(1)}" fill="${FAINT}" font-size="10">${money0(v)}</text>`).join('')}
+    ${[0, max / 2, max].map((v) => `<line x1="${pad.l}" x2="${pad.l + innerW}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`).join('')}
     <path d="${band}" fill="${MONEY}" opacity="0.09"/>
     <path d="${line('netRateCents')}" fill="none" stroke="${MONEY}" stroke-width="2" stroke-dasharray="3 3" opacity="0.75"/>
     <path d="${line('rateCents')}" fill="none" stroke="${MONEY}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${marks}
+    ${marks}${dateLabels}
     <circle cx="${x(last.t).toFixed(1)}" cy="${y(last.rateCents).toFixed(1)}" r="4" fill="${MONEY}" stroke="${SURFACE}" stroke-width="2"/>
-    <text x="${pad.l}" y="${h - 8}" fill="${FAINT}" font-size="10">${esc(dateLabel(t0))}</text>
-    <text x="${pad.l + inner.w}" y="${h - 8}" fill="${FAINT}" font-size="10" text-anchor="end">${esc(dateLabel(t1))}</text>
     <g class="hover" hidden>
-      <line class="cross" y1="${pad.t}" y2="${pad.t + inner.h}" stroke="${INK}" stroke-width="1" opacity=".5"/>
+      <line class="cross" y1="${pad.t}" y2="${pad.t + innerH}" stroke="${INK}" stroke-width="1" opacity=".5"/>
       <circle class="dot" r="4.5" fill="${MONEY}" stroke="${SURFACE}" stroke-width="2"/>
     </g>
-    <rect class="capture" x="${pad.l}" y="${pad.t}" width="${inner.w}" height="${inner.h}" fill="transparent"/>
+    <rect class="capture" x="${pad.l}" y="${pad.t}" width="${innerW}" height="${innerH}" fill="transparent"/>
   </svg>`;
+
+  const axis = [0, max / 2, max].map((v) =>
+    `<span style="top:${(y(v) - 7).toFixed(1)}px">${money0(v)}</span>`).join('');
 
   const legend = `<div class="legend">
     <span><i style="background:${MONEY}"></i>Effective rate</span>
@@ -131,11 +153,15 @@ function rateChart(data, { jobId, now, width }) {
   return {
     html: card('Effective rate over time',
       `Each point divides the deposits of the previous ${win} days by the hours worked in the same span.`,
-      svg, { legend, controls }),
-    wire: (root) => wireCrosshair(root, points, (p) =>
-      `<b>${dateLabel(p.t)}</b><span>${money2(p.p.rateCents)}/hr</span>` +
-      `<span class="dim">${money2(p.p.netRateCents)}/hr after tax</span>` +
-      `<span class="dim">${p.p.hours.toFixed(1)}h · ${money0(p.p.incomeCents)} in the window</span>`),
+      svg, { legend, controls, axis }),
+    wire: (root) => {
+      wireCrosshair(root, points, (p) =>
+        `<b>${dateLabel(p.t)}</b><span>${money2(p.p.rateCents)}/hr</span>` +
+        `<span class="dim">${money2(p.p.netRateCents)}/hr after tax</span>` +
+        `<span class="dim">${p.p.hours.toFixed(1)}h · ${money0(p.p.incomeCents)} in the window</span>`);
+      const sc = root.querySelector('.chart-scroll');
+      if (sc && sc.scrollWidth - sc.clientWidth > 12) sc.scrollLeft = sc.scrollWidth;
+    },
   };
 }
 
@@ -491,20 +517,42 @@ export function renderCharts(container, data, { jobId, now, from, to, onDrill })
 // ── metric breakdown, used by the tap-a-number popup ──────────────
 
 /**
- * One metric charted across consecutive blocks the width of the chosen range.
- * Rendered into an arbitrary element so it can live inside the sheet.
+ * The breakdown chart behind tapping a number. It owns its own block-size
+ * control, holds the whole history, and scrolls — same behaviour as the
+ * charts on the page itself.
  */
-export function renderMetricChart(el, series, { format, color = MONEY, subtitle = '' }) {
-  const pts = series.points.filter((p) => p.value !== null && p.value !== undefined);
+export function renderMetricChart(el, ctx) {
+  const { data, key, range, jobId, now, format, color } = ctx;
+  const rangeDays = range.from > S.MIN_TIME
+    ? Math.max(1, Math.round((range.to - range.from) / S.DAY_MS)) : null;
+
+  const choices = [
+    ...(rangeDays ? [['range', `${rangeDays}d`]] : []),
+    ['week', 'W'], ['month', 'M'], ['quarter', 'Q'], ['year', 'Y'],
+  ];
+  if (!rangeDays && opts.block === 'range') opts.block = 'year';
+
+  const series = S.metricSeries(data, key, { block: opts.block, range, jobId, now });
+  const controls = `<div class="chart-ctrl" data-opt="block">` +
+    choices.map(([v, label]) =>
+      `<button type="button" data-v="${v}" class="${opts.block === v ? 'is-active' : ''}">${esc(label)}</button>`).join('') +
+    '</div>';
+
+  const pts = (series?.points || []).filter((p) => p.value !== null && p.value !== undefined);
+  const head = `<div class="metric-head">
+      <p class="chart-note">${esc(blockNote(series, rangeDays))}</p>${controls}
+    </div>`;
+
   if (pts.length < 2) {
-    el.innerHTML = `<p class="empty">Not enough history to compare blocks yet.</p>`;
+    el.innerHTML = head + '<p class="empty">Not enough history to compare blocks yet.</p>';
+    bindBlock(el, ctx);
     return;
   }
 
-  const AXIS_W = 58, MIN_SLOT = 44;
+  const AXIS_W = 58, MIN_SLOT = 46;
   const pad = { t: 14, r: 18, b: 34, l: 20 };
   const h = 200;
-  const avail = Math.max(220, (el.clientWidth || 320) - AXIS_W);
+  const avail = Math.max(200, (el.clientWidth || 320) - AXIS_W);
   const contentW = Math.max(avail, pts.length * MIN_SLOT + pad.l + pad.r);
   const innerW = contentW - pad.l - pad.r;
   const innerH = h - pad.t - pad.b;
@@ -513,32 +561,52 @@ export function renderMetricChart(el, series, { format, color = MONEY, subtitle 
   const bw = Math.max(10, Math.min(46, slot - 10));
   const y = (v) => pad.t + innerH - (v / max) * innerH;
   const last = pts.length - 1;
+  const showValues = slot >= 40;
 
   const bars = pts.map((p, i) => {
     const cx = pad.l + slot * i + slot / 2;
+    // A zero block draws nothing; forcing a minimum height would read as a
+    // small nonzero value.
+    const bh = p.value > 0 ? Math.max(2, pad.t + innerH - y(p.value)) : 0;
     return `<rect class="bar" data-i="${i}" x="${(cx - bw / 2).toFixed(1)}" y="${y(p.value).toFixed(1)}"
-        width="${bw.toFixed(1)}" height="${Math.max(2, pad.t + innerH - y(p.value)).toFixed(1)}" rx="4"
-        fill="${color}" opacity="${i === last ? 1 : 0.62}"/>
-      <text x="${cx.toFixed(1)}" y="${h - 20}" fill="${FAINT}" font-size="10" text-anchor="middle">${esc(p.label)}</text>
-      <text x="${cx.toFixed(1)}" y="${h - 6}" fill="${i === last ? INK : FAINT}" font-size="10" text-anchor="middle">${esc(format(p.value))}</text>`;
+        width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="4"
+        fill="${color}" opacity="${p.value > 0 ? (i === last ? 1 : 0.62) : 0}"/>
+      <text x="${cx.toFixed(1)}" y="${h - (showValues ? 20 : 8)}" fill="${FAINT}" font-size="10" text-anchor="middle">${esc(p.label)}</text>
+      ${showValues ? `<text x="${cx.toFixed(1)}" y="${h - 6}" fill="${i === last ? INK : FAINT}" font-size="10" text-anchor="middle">${esc(format(p.value))}</text>` : ''}`;
   }).join('');
 
-  const axis = [0, max / 2, max].map((v) =>
-    `<span style="top:${(y(v) - 7).toFixed(1)}px">${esc(format(v))}</span>`).join('');
-
-  el.innerHTML = `
-    ${subtitle ? `<p class="chart-note">${esc(subtitle)}</p>` : ''}
+  el.innerHTML = head + `
     <div class="chart-hold is-scrolling">
       <div class="chart-scroll">
         <svg viewBox="0 0 ${contentW} ${h}" width="${contentW}" height="${h}" role="img"
-             aria-label="${esc(series.metric.label)} by period">
+             aria-label="${esc(series.metric.label)} by ${esc(series.block)}">
           ${[0, max / 2, max].map((v) => `<line x1="${pad.l}" x2="${pad.l + innerW}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`).join('')}
           ${bars}
         </svg>
+        <div class="tip" hidden></div>
       </div>
-      <div class="chart-axis">${axis}</div>
+      <div class="chart-axis">${[0, max / 2, max].map((v) =>
+        `<span style="top:${(y(v) - 7).toFixed(1)}px">${esc(format(v))}</span>`).join('')}</div>
     </div>`;
 
+  wireBars(el, pts, (p) => `<b>${esc(p.label)}</b><span>${esc(format(p.value))}</span>`);
   const sc = el.querySelector('.chart-scroll');
   if (sc && sc.scrollWidth - sc.clientWidth > 12) sc.scrollLeft = sc.scrollWidth;
+  bindBlock(el, ctx);
+}
+
+function blockNote(series, rangeDays) {
+  const b = series?.block;
+  if (b === 'range') return `One block per ${rangeDays} days, so you compare like with like.`;
+  return { week: 'One block per week.', month: 'One block per month.',
+           quarter: 'One block per quarter.', year: 'One block per calendar year.' }[b] || '';
+}
+
+function bindBlock(el, ctx) {
+  el.querySelector('.chart-ctrl[data-opt="block"]')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-v]');
+    if (!btn) return;
+    setOpt('block', btn.dataset.v);
+    renderMetricChart(el, ctx);
+  });
 }

@@ -481,44 +481,59 @@ export const METRICS = {
   lateNightPct:  { label: 'Worked after 10pm',      kind: 'pct',      get: (d, w) => patternStats(d, w).lateNightPct },
 };
 
+export const startOfQuarter = (t) => {
+  const d = new Date(t);
+  return new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1).getTime();
+};
+
+const UNIT_START = { week: startOfWeek, month: startOfMonth, quarter: startOfQuarter, year: startOfYear };
+const UNIT_NEXT = {
+  week: (t) => addDays(t, 7),
+  month: (t) => addMonths(t, 1),
+  quarter: (t) => addMonths(t, 3),
+  year: (t) => new Date(new Date(t).getFullYear() + 1, 0, 1).getTime(),
+};
+
+function unitLabel(t, unit) {
+  const d = new Date(t);
+  if (unit === 'week') return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (unit === 'month') return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  if (unit === 'quarter') return `Q${Math.floor(d.getMonth() / 3) + 1} ’${String(d.getFullYear()).slice(2)}`;
+  return String(d.getFullYear());
+}
+
 /**
- * One metric across consecutive blocks the width of the selected range, so
- * "last 90 days" becomes a row of 90-day blocks you can compare against each
- * other. An unbounded range has no width to repeat, so it falls back to years.
+ * One metric across consecutive blocks, covering the whole history so the
+ * chart can be scrolled. `block` is either a calendar unit or 'range', which
+ * repeats the width of the selected range so you compare like with like.
  */
-export function metricSeries(data, key, { range, jobId = null, now = Date.now(), count = 10 }) {
+export function metricSeries(data, key, { range, block = 'range', jobId = null, now = Date.now(), cap = 400 }) {
   const metric = METRICS[key];
   if (!metric) return null;
 
   const first = firstActivityAt(data, jobId);
-  if (first === null) return { metric, points: [], unit: 'block' };
+  if (first === null) return { metric, points: [], block };
 
   const points = [];
-  let unit = 'block';
+  const useRange = block === 'range' && range && range.from > MIN_TIME;
 
-  if (range.from <= MIN_TIME) {
-    unit = 'year';
-    const y0 = new Date(first).getFullYear();
-    const y1 = new Date(now).getFullYear();
-    for (let y = Math.max(y0, y1 - count + 1); y <= y1; y++) {
-      const from = new Date(y, 0, 1).getTime();
-      const to = new Date(y + 1, 0, 1).getTime();
-      points.push({ from, to, label: String(y) });
+  if (useRange) {
+    const span = range.to - range.from;
+    for (let to = range.to; points.length < cap; to -= span) {
+      points.unshift({ from: to - span, to, label: labelForSpan(to - span, span) });
+      if (to - span <= first) break;
     }
   } else {
-    const span = range.to - range.from;
-    for (let i = count - 1; i >= 0; i--) {
-      const to = range.to - span * i;
-      const from = to - span;
-      if (to <= first) continue;
-      points.push({ from, to, label: labelForSpan(from, span) });
+    const unit = block === 'range' ? 'year' : block;
+    const step = UNIT_NEXT[unit];
+    const endOfToday = startOfDay(now) + DAY_MS;
+    for (let from = UNIT_START[unit](first); from < endOfToday && points.length < cap; from = step(from)) {
+      points.push({ from, to: Math.min(step(from), endOfToday), label: unitLabel(from, unit) });
     }
   }
 
-  for (const p of points) {
-    p.value = metric.get(data, { from: p.from, to: p.to, jobId, now });
-  }
-  return { metric, points, unit };
+  for (const p of points) p.value = metric.get(data, { from: p.from, to: p.to, jobId, now });
+  return { metric, points, block: useRange ? 'range' : (block === 'range' ? 'year' : block) };
 }
 
 function labelForSpan(from, span) {

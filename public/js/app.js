@@ -759,24 +759,21 @@ function openMetricSheet(key) {
   const now = Date.now();
   const range = S.ranges(now).find((x) => x.key === ui.insightsRange) || S.ranges(now)[0];
   const jobId = ui.insightsJob || null;
-  const series = S.metricSeries(store.data, key, { range, jobId, now, count: 10 });
   const fmt = FORMATTERS[spec.kind] || String;
   const current = spec.get(store.data, { from: range.from, to: range.to, jobId, now });
-  const blockDays = Math.max(1, Math.round((range.to - range.from) / S.DAY_MS));
+  const gold = TONE[spec.kind] === 'gold';
 
   openSheet(spec.label, `
     <div class="metric-now">
-      <div class="v ${TONE[spec.kind] === 'gold' ? 'money' : 'hours'}">${current == null ? '—' : esc(fmt(current))}</div>
+      <div class="v ${gold ? 'money' : 'hours'}">${current == null ? '—' : esc(fmt(current))}</div>
       <div class="k">${esc(range.label)}${ui.insightsJob ? ' · ' + esc(store.job(ui.insightsJob)?.name ?? '') : ''}</div>
     </div>
     <div id="metricChart"></div>
   `, (root) => {
-    renderMetricChart($('#metricChart', root), series, {
+    renderMetricChart($('#metricChart', root), {
+      data: store.data, key, range, jobId, now,
       format: fmt,
-      color: TONE[spec.kind] === 'gold' ? '#c98500' : '#199e70',
-      subtitle: series.unit === 'year'
-        ? 'One block per calendar year.'
-        : `Each block covers ${blockDays} days, so you can compare like with like.`,
+      color: gold ? '#c98500' : '#199e70',
     });
   });
 }
