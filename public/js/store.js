@@ -32,6 +32,8 @@ class Store {
     this.jobs = new Map();
     this.shifts = new Map();
     this.payments = new Map();
+    this.categories = new Map();
+    this.expenses = new Map();
     this.lastRev = 0;
     this.status = 'connecting'; // connecting | live | offline
     this.lastError = null;
@@ -56,12 +58,15 @@ class Store {
         for (const j of raw.jobs || []) this.jobs.set(j.id, j);
         for (const s of raw.shifts || []) this.shifts.set(s.id, s);
         for (const p of raw.payments || []) this.payments.set(p.id, p);
+        for (const c of raw.categories || []) this.categories.set(c.id, c);
+        for (const e of raw.expenses || []) this.expenses.set(e.id, e);
         this.lastRev = raw.lastRev || 0;
       }
       this.queue = JSON.parse(localStorage.getItem(LS_QUEUE) || '[]');
     } catch {
       // A corrupt cache must never brick the app: drop it and re-pull.
       this.jobs.clear(); this.shifts.clear(); this.payments.clear();
+      this.categories.clear(); this.expenses.clear();
       this.lastRev = 0;
       this.queue = [];
     }
@@ -74,6 +79,8 @@ class Store {
         jobs: [...this.jobs.values()],
         shifts: [...this.shifts.values()],
         payments: [...this.payments.values()],
+        categories: [...this.categories.values()],
+        expenses: [...this.expenses.values()],
       }));
       localStorage.setItem(LS_QUEUE, JSON.stringify(this.queue));
     } catch {
@@ -89,7 +96,21 @@ class Store {
       jobs: this.activeJobs,
       shifts: [...this.shifts.values()].filter((s) => !s.deleted),
       payments: [...this.payments.values()].filter((p) => !p.deleted),
+      categories: this.activeCategories,
+      expenses: [...this.expenses.values()].filter((e) => !e.deleted),
     };
+  }
+
+  get activeCategories() {
+    return [...this.categories.values()]
+      .filter((c) => !c.deleted)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Null for a missing or deleted category, so callers fall back cleanly. */
+  category(id) {
+    const c = id ? this.categories.get(id) : null;
+    return c && !c.deleted ? c : null;
   }
 
   get activeJobs() {
@@ -134,7 +155,10 @@ class Store {
    */
   mutate(ops) {
     for (const { type, op, data } of ops) {
-      const map = { job: this.jobs, shift: this.shifts, payment: this.payments }[type];
+      const map = {
+        job: this.jobs, shift: this.shifts, payment: this.payments,
+        category: this.categories, expense: this.expenses,
+      }[type];
       if (!map) continue;
       if (op === 'delete') {
         const cur = map.get(data.id);
@@ -189,6 +213,9 @@ class Store {
       for (const j of d.jobs) this.jobs.set(j.id, j);
       for (const s of d.shifts) this.shifts.set(s.id, s);
       for (const p of d.payments) this.payments.set(p.id, p);
+      // `|| []` so a client updated ahead of its Worker still pulls cleanly.
+      for (const c of d.categories || []) this.categories.set(c.id, c);
+      for (const e of d.expenses || []) this.expenses.set(e.id, e);
       this.lastRev = d.rev;
 
       this.status = 'live';

@@ -51,3 +51,38 @@ CREATE INDEX IF NOT EXISTS idx_jobs_rev     ON jobs (rev);
 CREATE INDEX IF NOT EXISTS idx_shifts_rev   ON shifts (rev);
 CREATE INDEX IF NOT EXISTS idx_payments_rev ON payments (rev);
 CREATE INDEX IF NOT EXISTS idx_shifts_open  ON shifts (end_ms) WHERE end_ms IS NULL AND deleted = 0;
+
+-- ── Expenses ─────────────────────────────────────────────────────
+-- Additive only: re-running this file against an existing database creates
+-- these tables and leaves everything above untouched.
+
+-- Categories are shared across jobs — "Software" means the same thing in
+-- every business. Expenses themselves each belong to exactly one job.
+CREATE TABLE IF NOT EXISTS categories (
+  id         TEXT    PRIMARY KEY,
+  name       TEXT    NOT NULL,
+  created_ms INTEGER NOT NULL,
+  rev        INTEGER NOT NULL,
+  deleted    INTEGER NOT NULL DEFAULT 0
+);
+
+-- business_cents NULL means the whole amount was for business. When set, it is
+-- the business-use portion of total_cents, for mixed personal/business buys.
+-- attachments is JSON [{key, thumb, name, type, size}]; the files themselves
+-- live in R2, never in this database.
+CREATE TABLE IF NOT EXISTS expenses (
+  id             TEXT    PRIMARY KEY,
+  job_id         TEXT    NOT NULL,
+  category_id    TEXT,
+  spent_ms       INTEGER NOT NULL,
+  vendor         TEXT    NOT NULL DEFAULT '',
+  total_cents    INTEGER NOT NULL,
+  business_cents INTEGER,
+  note           TEXT    NOT NULL DEFAULT '',
+  attachments    TEXT    NOT NULL DEFAULT '[]',
+  rev            INTEGER NOT NULL,
+  deleted        INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_categories_rev ON categories (rev);
+CREATE INDEX IF NOT EXISTS idx_expenses_rev   ON expenses (rev);

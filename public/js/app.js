@@ -1,6 +1,7 @@
 import { store, newId } from './store.js';
 import * as S from './stats.js';
 import { renderCharts, renderMetricChart } from './charts.js';
+import { initExpenses } from './expenses-view.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -102,18 +103,36 @@ function deleteWithUndo(message, rows) {
 
 // ── sheet ─────────────────────────────────────────────────────────
 
-function openSheet(title, html, wire) {
+let sheetOnDismiss = null;
+
+function openSheet(title, html, wire, { onDismiss = null } = {}) {
+  sheetOnDismiss = onDismiss;
   $('#sheetTitle').textContent = title;
-  $('#sheetBody').innerHTML = html;
+  // A fresh body element for every sheet. Editors bind listeners to their
+  // root, and reusing one element let each previous editor's handlers keep
+  // firing into whichever sheet opened next — reading fields that no longer
+  // existed, and in the expense editor, able to delete an already-saved file.
+  const old = $('#sheetBody');
+  const body = old.cloneNode(false);
+  old.replaceWith(body);
+  body.innerHTML = html;
   $('#sheet').hidden = false;
-  wire?.($('#sheetBody'));
+  wire?.(body);
   const first = $('#sheetBody input, #sheetBody select');
   if (first && !('ontouchstart' in window)) first.focus();
 }
-const closeSheet = () => { $('#sheet').hidden = true; $('#sheetBody').innerHTML = ''; };
+// Closing after a completed action. The dismiss hook is for walking away from
+// a sheet, so it must not run here.
+const closeSheet = () => { sheetOnDismiss = null; $('#sheet').hidden = true; $('#sheetBody').innerHTML = ''; };
+// Backdrop, the × button, or Escape: the sheet was abandoned.
+function dismissSheet() {
+  const fn = sheetOnDismiss;
+  closeSheet();
+  fn?.();
+}
 
-$('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-close')) closeSheet(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
+$('#sheet').addEventListener('click', (e) => { if (e.target.hasAttribute('data-close')) dismissSheet(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#sheet').hidden) dismissSheet(); });
 
 // ── clock actions ─────────────────────────────────────────────────
 
@@ -557,6 +576,7 @@ function editJob(job) {
     return {
       shifts: d.shifts.filter((s) => s.job_id === j.id).length,
       payments: d.payments.filter((p) => p.job_id === j.id).length,
+      expenses: d.expenses.filter((x) => x.job_id === j.id).length,
     };
   })();
 
@@ -580,7 +600,7 @@ function editJob(job) {
       <div class="row-actions" style="margin-top:8px">
         <button class="btn btn-danger btn-block" id="f-del" type="button">Delete job</button>
       </div>
-      <p class="field-hint">Deleting removes ${counts.shifts} shift${counts.shifts === 1 ? '' : 's'} and ${counts.payments} deposit${counts.payments === 1 ? '' : 's'} with it. Archive instead to keep the history.</p>`}
+      <p class="field-hint">Deleting removes ${counts.shifts} shift${counts.shifts === 1 ? '' : 's'}, ${counts.payments} deposit${counts.payments === 1 ? '' : 's'} and ${counts.expenses} expense${counts.expenses === 1 ? '' : 's'} with it. Archive instead to keep the history.</p>`}
   `, (root) => {
     let color = j.color;
     $('#f-colors', root).addEventListener('click', (e) => {
@@ -600,11 +620,12 @@ function editJob(job) {
     });
 
     $('#f-del', root)?.addEventListener('click', () => {
-      if (!confirm(`Delete "${j.name}" and its ${counts.shifts} shift(s) and ${counts.payments} deposit(s)?`)) return;
+      if (!confirm(`Delete "${j.name}" and its ${counts.shifts} shift(s), ${counts.payments} deposit(s) and ${counts.expenses} expense(s)?`)) return;
       const d = store.data;
       const rows = [{ type: 'job', data: j }];
       for (const sh of d.shifts) if (sh.job_id === j.id) rows.push({ type: 'shift', data: sh });
       for (const pm of d.payments) if (pm.job_id === j.id) rows.push({ type: 'payment', data: pm });
+      for (const ex of d.expenses) if (ex.job_id === j.id) rows.push({ type: 'expense', data: ex });
       closeSheet();
       deleteWithUndo(`Deleted "${j.name}"`, rows);
     });
@@ -805,6 +826,7 @@ function renderSetup() {
       <button class="btn btn-quiet" data-editjob="${esc(j.id)}" type="button">Edit</button>
     </div>`;
   }).join('') : '<p class="empty">No jobs yet.</p>';
+  expenseView.renderCategories();
 }
 
 function download(name, text, type) {
@@ -884,6 +906,13 @@ $('#exportJsonBtn').addEventListener('click', () =>
 
 $('#syncPill').addEventListener('click', () => store.pull());
 
+// ── expenses ──────────────────────────────────────────────────────
+
+const expenseView = initExpenses({
+  store, newId, $, $$, esc, money, money0, openSheet, closeSheet, toast, deleteWithUndo,
+  toDateInput, fromDateInput, currentJobId, jobOptions, fillJobSelect, download,
+});
+
 // ── render loop ───────────────────────────────────────────────────
 
 function renderSync() {
@@ -899,6 +928,7 @@ function render() {
   if (ui.view === 'clock') renderClock();
   else if (ui.view === 'history') renderHistory();
   else if (ui.view === 'insights') renderInsights();
+  else if (ui.view === 'expenses') expenseView.render();
   else if (ui.view === 'setup') renderSetup();
 }
 

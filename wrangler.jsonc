@@ -18,6 +18,12 @@
     }
   ],
 
+  // Receipts and statements. Private: files are only ever served through the
+  // Worker, behind Access — there is no public bucket URL.
+  "r2_buckets": [
+    { "binding": "FILES", "bucket_name": "work-tracker-files" }
+  ],
+
   "durable_objects": {
     "bindings": [{ "name": "SYNC", "class_name": "SyncHub" }]
   },

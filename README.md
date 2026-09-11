@@ -26,6 +26,28 @@ Other rules worth knowing:
 - **Money is stored in integer cents**, never floats.
 - **Jobs never mix.** Each job keeps its own hours and deposits.
 
+## Expenses
+
+A separate, optional ledger of business costs for tax time, on its own tab.
+Nothing in it feeds the time-to-money figures.
+
+- **Per job.** Each job is its own business, so every expense belongs to one.
+- **Categories are shared** across jobs and managed in Setup. Deleting one
+  leaves its expenses in place as Uncategorized.
+- **Business-use split.** Leave it off and the whole amount is business use;
+  turn it on for a mixed personal/business purchase to record the business
+  portion separately.
+- **Receipts and statements** attach as photos or PDFs. Large photos are
+  shrunk in the browser (about 2000px on the long edge, so small print stays
+  legible); small screenshots and PDFs go up untouched.
+- **Export for taxes** builds a zip per job and year: a readable summary
+  (including any transactions missing a receipt), spreadsheets by transaction,
+  category and vendor, and every receipt renamed to match its entry.
+  Hand-typed text is neutralised so a vendor name can't run as a formula.
+
+Files live in **R2**, never in D1 (which caps a row at 2 MB). The bucket is
+private: files are served only through the Worker, behind Access.
+
 ## Architecture
 
 Local-first. The UI reads from an in-memory store hydrated from `localStorage`
@@ -59,6 +81,11 @@ statistics would.
 | `public/js/charts.js` | inline-SVG charts |
 | `public/js/app.js` | rendering and interaction |
 | `test/stats.test.mjs` | `npm test` |
+| `public/js/expenses.js` | expense totals, CSV and export — pure, tested |
+| `public/js/zip.js` | minimal zip writer — pure, tested |
+| `public/js/files.js` | photo shrinking, upload and delete |
+| `public/js/expenses-view.js` | the Expenses tab, editor, categories, export |
+| `test/expenses.test.mjs` | `npm test` |
 
 ## Everything here fits the free tier
 
@@ -70,9 +97,14 @@ statistics would.
 | D1 | 5GB, 5M row reads/day | a few thousand rows total |
 | Durable Objects | free, **SQLite-backed only** | one object |
 | Zero Trust Access | 50 users | 1 |
+| R2 | 10 GB, 1M writes and 10M reads a month, free egress | hundreds of receipts ≈ a few hundred MB |
 
 Ping/pong on the socket uses the Durable Object's auto-response, so idle
 connections never wake the object and cost nothing against the duration budget.
+
+R2 is the one piece that needs **a payment method on file** to enable, even on
+the free tier. Nothing is billed within the limits above, and Access in front
+of every route means no one else can generate usage.
 
 ## Local development
 
@@ -110,3 +142,17 @@ into `public/`, so GitHub Pages will not serve it any more.
 
 Step 5 is defence in depth. Access already blocks unauthenticated traffic at
 the edge; the Worker independently verifies the signed JWT.
+
+### Adding expenses to an existing deployment
+
+The schema is additive, so this leaves existing data untouched.
+
+1. Enable R2 in the Cloudflare dashboard (this is where it asks for a card).
+2. `npx wrangler r2 bucket create work-tracker-files` — keep it private; do
+   not enable a public r2.dev URL.
+3. `npm run db:remote` to create the `categories` and `expenses` tables.
+4. `npm run deploy`.
+
+Locally, `wrangler dev` simulates the bucket, so none of this is needed to
+preview. It does need `.dev.vars` (gitignored) with blank `ACCESS_TEAM_DOMAIN=`
+and `ACCESS_AUD=` lines, or local requests are refused as unauthenticated.

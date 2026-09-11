@@ -7,7 +7,7 @@
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 execute work-tracker --local --file=./schema.sql",
     "db:remote": "wrangler d1 execute work-tracker --remote --file=./schema.sql",
-    "test": "TZ=America/New_York node test/stats.test.mjs"
+    "test": "TZ=America/New_York node test/stats.test.mjs && TZ=America/New_York node test/expenses.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.129.1"
