@@ -657,3 +657,8 @@ button.tile:active { filter: brightness(1.12); }
 @media (max-width: 360px) {
   .toolbar > .seg { flex-basis: 100%; }
 }
+
+/* Flagged expenses: the bar turns to the warning colour and the second line
+   leads with a labelled flag, so the state never relies on colour alone. */
+.entry.expense.is-flagged .bar { background: var(--warn); }
+.entry .flag { color: #e79878; font-weight: 550; }

@@ -37,6 +37,11 @@ Nothing in it feeds the time-to-money figures.
 - **Business-use split.** Leave it off and the whole amount is business use;
   turn it on for a mixed personal/business purchase to record the business
   portion separately.
+- **Flags.** Mark a transaction for attention with an optional reason — one
+  tap for *Missing information*, *Needs review* or *Potentially risky*, or type
+  your own. Flagged rows stand out, a status filter isolates them (or the ones
+  missing a receipt), and the export lists them first in the summary and in
+  their own CSV columns.
 - **Receipts and statements** attach as photos or PDFs. Large photos are
   shrunk in the browser (about 2000px on the long edge, so small print stays
   legible); small screenshots and PDFs go up untouched.
@@ -110,7 +115,7 @@ of every route means no one else can generate usage.
 
 ```sh
 npm install
-npx wrangler d1 execute work-tracker --local --file=./schema.sql
+npm run db:local
 npm run dev          # http://127.0.0.1:8788
 npm test             # stats math
 ```
@@ -150,9 +155,22 @@ The schema is additive, so this leaves existing data untouched.
 1. Enable R2 in the Cloudflare dashboard (this is where it asks for a card).
 2. `npx wrangler r2 bucket create work-tracker-files` — keep it private; do
    not enable a public r2.dev URL.
-3. `npm run db:remote` to create the `categories` and `expenses` tables.
+3. `npm run db:remote` to apply any pending migrations.
 4. `npm run deploy`.
 
 Locally, `wrangler dev` simulates the bucket, so none of this is needed to
 preview. It does need `.dev.vars` (gitignored) with blank `ACCESS_TEAM_DOMAIN=`
 and `ACCESS_AUD=` lines, or local requests are refused as unauthenticated.
+
+### Changing the schema
+
+Schema changes live in `migrations/` as numbered SQL files, applied by
+`wrangler d1 migrations`, which records what has run so nothing runs twice.
+Add a new file rather than editing an old one, then apply it **before**
+deploying code that depends on it:
+
+```sh
+npm run db:local     # preview
+npm run db:remote    # production — takes a backup first
+npm run deploy
+```

@@ -26,7 +26,7 @@ export function initExpenses(ctx) {
     toDateInput, fromDateInput, currentJobId, jobOptions, fillJobSelect, download,
   } = ctx;
 
-  const st = { job: '', year: String(new Date().getFullYear()), category: '', limit: 60 };
+  const st = { job: '', year: String(new Date().getFullYear()), category: '', status: '', limit: 60 };
   const cats = () => store.activeCategories;
 
   const period = (year) => (year
@@ -54,10 +54,18 @@ export function initExpenses(ctx) {
       cs.map((c) => `<option value="${esc(c.id)}"${c.id === st.category ? ' selected' : ''}>${esc(c.name)}</option>`).join('') +
       `<option value="__none"${st.category === '__none' ? ' selected' : ''}>${X.UNCATEGORIZED}</option>`;
 
+    $('#expStatus').innerHTML = [['', 'All transactions'], ['flagged', 'Flagged'], ['noreceipt', 'Missing a receipt']]
+      .map(([v, label]) => `<option value="${v}"${v === st.status ? ' selected' : ''}>${label}</option>`).join('');
+
     const p = period(st.year);
-    const list = X.filterExpenses(data.expenses, cs, { jobId: st.job, from: p.from, to: p.to, category: st.category });
+    const list = X.filterExpenses(data.expenses, cs,
+      { jobId: st.job, from: p.from, to: p.to, category: st.category, status: st.status });
     const sum = X.summarizeExpenses(list, cs);
     const missing = sum.count - sum.withReceipts;
+    const attention = [
+      sum.flagged ? `${sum.flagged} flagged` : '',
+      missing ? `${missing} missing a receipt` : '',
+    ].filter(Boolean);
     const personal = sum.totalCents - sum.businessCents;
 
     $('#expTiles').innerHTML = `
@@ -68,7 +76,7 @@ export function initExpenses(ctx) {
           : 'All of it was fully for business'}</div></div>
       <div class="tile"><div class="k">Total paid</div><div class="v">${money0(sum.totalCents)}</div></div>
       <div class="tile"><div class="k">Transactions</div><div class="v">${sum.count}</div>
-        <div class="sub${missing ? ' warnish' : ''}">${!sum.count ? '—' : missing ? `${missing} missing a receipt` : 'All have receipts'}</div></div>`;
+        <div class="sub${attention.length ? ' warnish' : ''}">${!sum.count ? '—' : attention.length ? attention.join(' · ') : 'All have receipts'}</div></div>`;
 
     // Grouped by id rather than name, so two categories can share a name.
     const bd = $('#expBreakdown');
@@ -121,9 +129,11 @@ export function initExpenses(ctx) {
     const c = store.category(e.category_id);
     const n = (e.attachments || []).length;
     const bits = [esc(c ? c.name : X.UNCATEGORIZED), esc(shortDate(e.spent_ms))];
+    // The flag leads the line: it's the thing you came back to deal with.
+    if (X.isFlagged(e)) bits.unshift(`<span class="flag">Flagged${e.flag_note ? ': ' + esc(e.flag_note) : ''}</span>`);
     if (!st.job) bits.push(esc(store.job(e.job_id)?.name ?? 'Unknown job'));
     bits.push(n ? `${n} file${n === 1 ? '' : 's'}` : '<span class="nr">No receipt</span>');
-    return `<button class="entry expense" data-exp="${esc(e.id)}" type="button">
+    return `<button class="entry expense${X.isFlagged(e) ? ' is-flagged' : ''}" data-exp="${esc(e.id)}" type="button">
       <span class="bar"></span>
       <span class="main"><span class="t1">${esc(X.vendorName(e))}</span><span class="t2">${bits.join(' · ')}</span></span>
       <span class="amt">${money(X.businessCents(e))}${X.isSplit(e) ? `<span class="s">of ${money(e.total_cents)}</span>` : ''}</span>
@@ -133,6 +143,7 @@ export function initExpenses(ctx) {
   $('#expJob').addEventListener('change', (e) => { st.job = e.target.value; st.limit = 60; render(); });
   $('#expYear').addEventListener('change', (e) => { st.year = e.target.value; st.limit = 60; render(); });
   $('#expCategory').addEventListener('change', (e) => { st.category = e.target.value; st.limit = 60; render(); });
+  $('#expStatus').addEventListener('change', (e) => { st.status = e.target.value; st.limit = 60; render(); });
   $('#expBreakdown').addEventListener('click', (e) => {
     const b = e.target.closest('[data-expcat]');
     if (b) { st.category = b.dataset.expcat; st.limit = 60; render(); }
@@ -190,6 +201,7 @@ export function initExpenses(ctx) {
           category_id: st.category && st.category !== '__none' ? st.category : null,
           spent_ms: fromDateInput(toDateInput(Date.now())), vendor: '',
           total_cents: 0, business_cents: null, note: '', attachments: [],
+          flagged: 0, flag_note: '',
         };
 
     const added = [];      // uploaded during this edit — deleted again if it is abandoned
@@ -236,6 +248,11 @@ export function initExpenses(ctx) {
           <input type="file" id="x-file" accept="image/*,application/pdf" multiple hidden></label></div>
       <div class="field"><label for="x-note">Note</label>
         <textarea class="input" id="x-note" rows="2" placeholder="Optional">${esc(e.note)}</textarea></div>
+      <label class="check"><input type="checkbox" id="x-flag"${e.flagged ? ' checked' : ''}> Flag this for review</label>
+      <div class="field" id="x-flag-row"${e.flagged ? '' : ' hidden'}>
+        <input class="input" id="x-flagnote" maxlength="200" placeholder="Why? (optional)" value="${esc(e.flag_note || '')}">
+        <div class="row-actions" style="margin-top:8px">${X.FLAG_REASONS.map((r) =>
+          `<button class="btn btn-quiet" data-flagreason="${esc(r)}" type="button">${esc(r)}</button>`).join('')}</div></div>
       <div class="row-actions"><button class="btn btn-primary btn-block" id="x-save" type="button">${isNew ? 'Add expense' : 'Save changes'}</button></div>
       ${isNew ? '' : '<div class="row-actions" style="margin-top:8px"><button class="btn btn-danger btn-block" id="x-del" type="button">Delete expense</button></div>'}
     `, (root) => {
@@ -267,8 +284,14 @@ export function initExpenses(ctx) {
       };
 
       q('#x-split').addEventListener('change', () => { q('#x-split-row').hidden = !q('#x-split').checked; hint(); });
+      q('#x-flag').addEventListener('change', () => {
+        q('#x-flag-row').hidden = !q('#x-flag').checked;
+        if (q('#x-flag').checked) q('#x-flagnote').focus();
+      });
       root.addEventListener('input', hint);
       root.addEventListener('click', (ev) => {
+        const reason = ev.target.dataset?.flagreason;
+        if (reason) { q('#x-flagnote').value = reason; return; }
         const pct = ev.target.dataset?.bizpct;
         if (pct) {
           q('#x-biz').value = (Math.round((cents(q('#x-total').value) * pct) / 100) / 100).toFixed(2);   // nearest cent
@@ -338,6 +361,8 @@ export function initExpenses(ctx) {
           ...e, job_id: job, spent_ms: fromDateInput(q('#x-date').value), vendor: q('#x-vendor').value.trim(),
           category_id: q('#x-cat').value || null, total_cents: total, business_cents: biz,
           note: q('#x-note').value.trim(), attachments: e.attachments,
+          flagged: q('#x-flag').checked ? 1 : 0,
+          flag_note: q('#x-flag').checked ? q('#x-flagnote').value.trim() : '',
         } }]);
         for (const a of removed) deleteAttachment(a);
         closeSheet();
@@ -457,7 +482,8 @@ export function initExpenses(ctx) {
         const s = X.summarizeExpenses(all, cats());
         const files = all.reduce((n, e) => n + (e.attachments || []).length, 0);
         q('#z-preview').textContent = all.length
-          ? `${s.count} transactions · ${files} file${files === 1 ? '' : 's'} · ${money(s.businessCents)} business use`
+          ? `${s.count} transactions · ${files} file${files === 1 ? '' : 's'} · ${money(s.businessCents)} business use` +
+            (s.flagged ? ` · ${s.flagged} flagged, listed first in the summary` : '')
           : 'Nothing logged for that job and year.';
         q('#z-go').disabled = !all.length;
       };

@@ -212,15 +212,19 @@ function buildStatements(db, ops, rev) {
         db
           .prepare(
             `INSERT INTO expenses (id, job_id, category_id, spent_ms, vendor, total_cents,
-                                   business_cents, note, attachments, rev, deleted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
+                                   business_cents, note, attachments, flagged, flag_note, rev, deleted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11, ?12, ?10, 0)
              ON CONFLICT(id) DO UPDATE SET
                job_id = ?2, category_id = ?3, spent_ms = ?4, vendor = ?5, total_cents = ?6,
-               business_cents = ?7, note = ?8, attachments = ?9, rev = ?10, deleted = 0`,
+               business_cents = ?7, note = ?8, attachments = ?9, flagged = ?11, flag_note = ?12,
+               rev = ?10, deleted = 0`,
           )
           .bind(
             rowId, jobId, id(d.category_id), int(d.spent_ms), str(d.vendor, 120),
             total, biz, str(d.note, 1000), JSON.stringify(cleanAttachments(d.attachments)), rev,
+            // An unflagged expense carries no reason, so clearing the flag
+            // can't leave a stale one behind.
+            d.flagged ? 1 : 0, d.flagged ? str(d.flag_note, 200) : '',
           ),
       );
     }

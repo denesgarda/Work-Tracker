@@ -1,3 +1,6 @@
+-- Migration 0001. The original schema, applied by `wrangler d1 migrations`
+-- from here on, which records what has run so nothing runs twice.
+
 -- Work Tracker schema.
 -- Sync model: every row carries a monotonically increasing `rev`. Clients pull
 -- `WHERE rev > lastRev` to catch up. Deletes are tombstones (deleted=1) so they

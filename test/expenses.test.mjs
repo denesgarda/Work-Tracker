@@ -11,6 +11,7 @@ const at = (y, m, d) => new Date(y, m - 1, d, 12).getTime();
 const E = (o) => ({
   id: o.id, job_id: o.job ?? 'j1', category_id: o.cat ?? null, spent_ms: o.at, vendor: o.vendor ?? '',
   total_cents: o.total, business_cents: o.biz ?? null, note: o.note ?? '', attachments: o.atts ?? [], deleted: o.deleted ?? 0,
+  flagged: o.flagged ?? 0, flag_note: o.flagNote ?? '',
 });
 const cats = [{ id: 'c1', name: 'Software' }, { id: 'c2', name: 'Equipment' }, { id: 'c3', name: 'Gone', deleted: 1 }];
 
@@ -116,6 +117,27 @@ if (haveUnzip) {
 } else {
   console.log('  (unzip not installed — structural zip checks skipped)');
 }
+
+console.log('\n-- flags --');
+const fl = [
+  E({ id: 'f1', at: at(2026, 2, 1), vendor: 'Uber', total: 2310, flagged: 1, flagNote: 'Needs review', atts: [{ key: 'exp/f1/a.jpg' }] }),
+  E({ id: 'f2', at: at(2026, 2, 2), vendor: 'Sephora', total: 4500, flagged: 1, flagNote: '=HYPERLINK("x")' }),
+  E({ id: 'f3', at: at(2026, 2, 3), vendor: 'Adobe', total: 5499, atts: [{ key: 'exp/f3/a.jpg' }] }),
+  E({ id: 'f4', at: at(2026, 2, 4), vendor: 'Target', total: 900, flagged: 1 }),
+];
+ok('status filter: flagged only', ids(X.filterExpenses(fl, cats, { status: 'flagged' })) === 'f1,f2,f4');
+ok('status filter: missing a receipt', ids(X.filterExpenses(fl, cats, { status: 'noreceipt' })) === 'f2,f4');
+ok('flagged counted in the summary', X.summarizeExpenses(fl, cats).flagged === 3);
+const fx = X.buildExport({ expenses: fl, categories: cats, jobName: 'UGC', periodLabel: '2026' });
+const fcsv = fx.files.find((f) => f.name.endsWith('/expenses.csv')).data.trim().split('\r\n');
+ok('CSV gains Flagged and Flag reason columns', fcsv[0].includes('Business %,Flagged,Flag reason,Note'));
+ok('a flagged row carries its reason', fcsv.some((l) => l.includes(',Yes,Needs review,')), fcsv.join('\n'));
+ok('an unflagged row leaves both flag cells empty', fcsv.find((l) => l.includes('Adobe')).includes('%,,,'));
+ok('a hand-typed flag reason cannot inject a formula', fcsv.some((l) => l.includes(`,Yes,"'=HYPERLINK(""x"")",`)), fcsv.join('\n'));
+const fsum = fx.files.find((f) => f.name.endsWith('/summary.txt')).data;
+ok('summary lists every flagged transaction with its reason', fsum.includes('FLAGGED FOR REVIEW (3)') && fsum.includes('Needs review'));
+ok('a flag with no reason says so rather than printing nothing', fsum.includes('No reason given'));
+ok('flagged items come before the breakdowns', fsum.indexOf('FLAGGED FOR REVIEW') < fsum.indexOf('BY CATEGORY'));
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
