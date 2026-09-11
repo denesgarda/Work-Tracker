@@ -913,6 +913,17 @@ const expenseView = initExpenses({
   toDateInput, fromDateInput, currentJobId, jobOptions, fillJobSelect, download,
 });
 
+// iOS can leave position:fixed elements — the tab bar — stranded mid-screen
+// after the on-screen keyboard closes, until the next scroll. Nudge one.
+document.addEventListener('focusout', (e) => {
+  if (!e.target.matches?.('input, select, textarea')) return;
+  setTimeout(() => {
+    if (!document.activeElement?.matches?.('input, select, textarea')) {
+      window.scrollTo(window.scrollX, window.scrollY);
+    }
+  }, 60);
+});
+
 // ── render loop ───────────────────────────────────────────────────
 
 function renderSync() {

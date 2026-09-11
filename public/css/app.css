@@ -641,3 +641,19 @@ button.tile:active { filter: brightness(1.12); }
 /* Expense rows put the vendor on its own line: the second line carries the
    category, date, job and receipt status, and is too long to share one. */
 .entry.expense .t1, .entry.expense .t2 { display: block; }
+
+/* iOS zooms the whole page when a field under 16px takes focus, and does not
+   zoom back out afterwards — which leaves the fixed tab bar sitting partway up
+   the screen. 16px on phones stops the zoom from happening at all. !important
+   because several field rules set smaller sizes at higher specificity. */
+@media (max-width: 720px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* The Shifts / Deposits switch can't shrink below its labels, so on the
+   narrowest phones it takes its own row rather than widening the page. */
+@media (max-width: 360px) {
+  .toolbar > .seg { flex-basis: 100%; }
+}
