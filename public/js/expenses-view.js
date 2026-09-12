@@ -6,10 +6,13 @@ import * as X from './expenses.js';
 import { makeZip } from './zip.js';
 import { uploadAttachment, deleteAttachment, fileUrl, isImage } from './files.js';
 
+// Meals are 50% deductible by law; everything else starts at 100% and can be
+// changed per category in Setup.
 const SUGGESTED = [
-  'Equipment', 'Software & subscriptions', 'Props & wardrobe', 'Supplies',
-  'Phone & internet', 'Travel', 'Meals', 'Advertising & marketing',
-  'Education & courses', 'Home office', 'Professional fees', 'Other',
+  ['Equipment', 100], ['Software & subscriptions', 100], ['Props & wardrobe', 100],
+  ['Supplies', 100], ['Phone & internet', 100], ['Travel', 100], ['Meals', 50],
+  ['Advertising & marketing', 100], ['Education & courses', 100], ['Home office', 100],
+  ['Professional fees', 100], ['Other', 100],
 ];
 
 const cents = (v) => Math.round((parseFloat(v) || 0) * 100);
@@ -54,29 +57,33 @@ export function initExpenses(ctx) {
       cs.map((c) => `<option value="${esc(c.id)}"${c.id === st.category ? ' selected' : ''}>${esc(c.name)}</option>`).join('') +
       `<option value="__none"${st.category === '__none' ? ' selected' : ''}>${X.UNCATEGORIZED}</option>`;
 
-    $('#expStatus').innerHTML = [['', 'All transactions'], ['flagged', 'Flagged'], ['noreceipt', 'Missing a receipt']]
-      .map(([v, label]) => `<option value="${v}"${v === st.status ? ' selected' : ''}>${label}</option>`).join('');
-
     const p = period(st.year);
-    const list = X.filterExpenses(data.expenses, cs,
-      { jobId: st.job, from: p.from, to: p.to, category: st.category, status: st.status });
+    // Counts come from everything the other filters allow, so switching
+    // between chips never changes the numbers on them.
+    const base = X.filterExpenses(data.expenses, cs, { jobId: st.job, from: p.from, to: p.to, category: st.category });
+    const counts = X.attentionCounts(base);
+    const list = st.status ? base.filter((e) => X.attentionOf(e).includes(st.status)) : base;
     const sum = X.summarizeExpenses(list, cs);
-    const missing = sum.count - sum.withReceipts;
-    const attention = [
-      sum.flagged ? `${sum.flagged} flagged` : '',
-      missing ? `${missing} missing a receipt` : '',
-    ].filter(Boolean);
+
+    $('#expAttention').hidden = !base.length;
+    $('#expAttention').innerHTML = '<h2 class="card-title">Needs attention</h2><div class="chips">' +
+      X.ATTENTION.map((a) => `<button class="chip${st.status === a.key ? ' is-active' : ''}" data-att="${a.key}"
+          type="button"${counts[a.key] ? '' : ' disabled'}>
+          <span class="n">${counts[a.key]}</span><span class="l">${esc(a.label)}</span></button>`).join('') +
+      '</div>';
     const personal = sum.totalCents - sum.businessCents;
+    const missing = sum.count - sum.withReceipts;
 
     $('#expTiles').innerHTML = `
-      <div class="tile lead"><div class="k">Business use — ${esc(p.label)}</div>
-        <div class="v money">${money(sum.businessCents)}</div>
+      <div class="tile lead"><div class="k">Deductible — ${esc(p.label)}</div>
+        <div class="v money">${money(sum.deductibleCents)}</div>
         <div class="sub">${!sum.count ? 'Nothing logged yet'
+          : sum.deductibleCents !== sum.businessCents
+            ? `${money(sum.businessCents)} business use, reduced by category limits`
           : personal > 0 ? `${money(personal)} of what you paid was personal`
           : 'All of it was fully for business'}</div></div>
       <div class="tile"><div class="k">Total paid</div><div class="v">${money0(sum.totalCents)}</div></div>
-      <div class="tile"><div class="k">Transactions</div><div class="v">${sum.count}</div>
-        <div class="sub${attention.length ? ' warnish' : ''}">${!sum.count ? '—' : attention.length ? attention.join(' · ') : 'All have receipts'}</div></div>`;
+      <div class="tile"><div class="k">Transactions</div><div class="v">${sum.count}</div></div>`;
 
     // Grouped by id rather than name, so two categories can share a name.
     const bd = $('#expBreakdown');
@@ -85,16 +92,20 @@ export function initExpenses(ctx) {
       for (const e of list) {
         const c = store.category(e.category_id);
         const k = c ? c.id : '__none';
-        const g = groups.get(k) || { k, name: c ? c.name : X.UNCATEGORIZED, count: 0, biz: 0 };
+        const g = groups.get(k) || {
+          k, name: c ? c.name : X.UNCATEGORIZED, count: 0, biz: 0,
+          pct: X.categoryPct(cs, e.category_id),
+        };
         g.count++;
-        g.biz += X.businessCents(e);
+        g.biz += X.deductibleCents(e, cs);
         groups.set(k, g);
       }
       bd.hidden = false;
       bd.innerHTML = '<h2 class="card-title">By category</h2><dl class="statlist">' +
         [...groups.values()].sort((a, b) => b.biz - a.biz).map((g) =>
           `<div><button class="statrow" type="button" data-expcat="${esc(g.k)}">
-             <dt>${esc(g.name)}<span class="cnt">${g.count}</span></dt><dd>${money(g.biz)}</dd></button></div>`).join('') +
+             <dt>${esc(g.name)}<span class="cnt">${g.count}</span>${g.pct < 100 ? `<span class="cnt">${g.pct}%</span>` : ''}</dt>
+             <dd>${money(g.biz)}</dd></button></div>`).join('') +
         '</dl>';
     } else {
       bd.hidden = true;
@@ -128,12 +139,16 @@ export function initExpenses(ctx) {
   function rowHtml(e) {
     const c = store.category(e.category_id);
     const n = (e.attachments || []).length;
+    const att = X.attentionOf(e);
     const bits = [esc(c ? c.name : X.UNCATEGORIZED), esc(shortDate(e.spent_ms))];
-    // The flag leads the line: it's the thing you came back to deal with.
+    // Whatever needs attention leads the line — it's why you came back to it.
     if (X.isFlagged(e)) bits.unshift(`<span class="flag">Flagged${e.flag_note ? ': ' + esc(e.flag_note) : ''}</span>`);
+    if (att.includes('big')) bits.unshift('<span class="flag">Over $2,500</span>');
+    if (att.includes('nonote')) bits.unshift('<span class="nr">No note</span>');
     if (!st.job) bits.push(esc(store.job(e.job_id)?.name ?? 'Unknown job'));
-    bits.push(n ? `${n} file${n === 1 ? '' : 's'}` : '<span class="nr">No receipt</span>');
-    return `<button class="entry expense${X.isFlagged(e) ? ' is-flagged' : ''}" data-exp="${esc(e.id)}" type="button">
+    if (att.includes('noreceipt')) bits.push('<span class="nr">No receipt</span>');
+    else if (n) bits.push(`${n} file${n === 1 ? '' : 's'}`);
+    return `<button class="entry expense${att.length ? ' is-attention' : ''}" data-exp="${esc(e.id)}" type="button">
       <span class="bar"></span>
       <span class="main"><span class="t1">${esc(X.vendorName(e))}</span><span class="t2">${bits.join(' · ')}</span></span>
       <span class="amt">${money(X.businessCents(e))}${X.isSplit(e) ? `<span class="s">of ${money(e.total_cents)}</span>` : ''}</span>
@@ -143,7 +158,13 @@ export function initExpenses(ctx) {
   $('#expJob').addEventListener('change', (e) => { st.job = e.target.value; st.limit = 60; render(); });
   $('#expYear').addEventListener('change', (e) => { st.year = e.target.value; st.limit = 60; render(); });
   $('#expCategory').addEventListener('change', (e) => { st.category = e.target.value; st.limit = 60; render(); });
-  $('#expStatus').addEventListener('change', (e) => { st.status = e.target.value; st.limit = 60; render(); });
+  $('#expAttention').addEventListener('click', (e) => {
+    const key = e.target.closest('[data-att]')?.dataset.att;
+    if (!key) return;
+    st.status = st.status === key ? '' : key;   // tapping the active chip clears it
+    st.limit = 60;
+    render();
+  });
   $('#expBreakdown').addEventListener('click', (e) => {
     const b = e.target.closest('[data-expcat]');
     if (b) { st.category = b.dataset.expcat; st.limit = 60; render(); }
@@ -232,7 +253,8 @@ export function initExpenses(ctx) {
           <button class="btn btn-quiet" id="x-newcat" type="button">New</button></div>
         <div class="inline-new" id="x-newcat-row" hidden>
           <input class="input" id="x-newcat-name" placeholder="Category name" maxlength="60">
-          <button class="btn btn-quiet" id="x-newcat-add" type="button">Add</button></div></div>
+          <button class="btn btn-quiet" id="x-newcat-add" type="button">Add</button></div>
+        <p class="field-hint" id="x-pct"></p></div>
       <label class="check"><input type="checkbox" id="x-split"${split ? ' checked' : ''}>
         Only part of this was for business</label>
       <div class="field" id="x-split-row"${split ? '' : ' hidden'}>
@@ -242,6 +264,8 @@ export function initExpenses(ctx) {
         <div class="row-actions" style="margin-top:8px">${[25, 50, 75].map((p) =>
           `<button class="btn btn-quiet" data-bizpct="${p}" type="button">${p}%</button>`).join('')}</div></div>
       <p class="field-hint" id="x-hint"></p>
+      <p class="field-hint warnish" id="x-big" hidden>Over $2,500 — this may have to be spread over several
+        years rather than deducted at once. Worth flagging for your accountant.</p>
       <div class="field"><label>Receipts and statements</label>
         <div class="attach-grid" id="x-atts"></div>
         <label class="btn btn-quiet attach-add">Add a photo or PDF
@@ -281,6 +305,14 @@ export function initExpenses(ctx) {
           : !on ? `${money(t)} counts as business use.`
           : b > t ? 'The business portion is more than the amount paid.'
           : `${money(b)} business use of ${money(t)} · ${Math.round((b / t) * 100)}%`;
+
+        const pct = X.categoryPct(cats(), q('#x-cat').value || null);
+        q('#x-pct').textContent = pct >= 100 ? ''
+          : t ? `Only ${pct}% of this category is deductible — ${money(b)} counts as ${money(Math.round((b * pct) / 100))}.`
+              : `Only ${pct}% of this category is deductible.`;
+
+        const over = t >= X.REVIEW_ABOVE_CENTS;
+        q('#x-big').hidden = !over;
       };
 
       q('#x-split').addEventListener('change', () => { q('#x-split-row').hidden = !q('#x-split').checked; hint(); });
@@ -329,6 +361,7 @@ export function initExpenses(ctx) {
         }
       });
 
+      q('#x-cat').addEventListener('change', hint);
       q('#x-newcat').addEventListener('click', () => {
         const row = q('#x-newcat-row');
         row.hidden = !row.hidden;
@@ -393,7 +426,7 @@ export function initExpenses(ctx) {
     $('#categoryList').innerHTML = cs.length
       ? cs.map((c) => {
           const n = counts.get(c.id) || 0;
-          return `<div class="jobitem"><span class="nm">${esc(c.name)}</span>
+          return `<div class="jobitem"><span class="nm">${esc(c.name)}${c.deduct_pct < 100 ? ` · ${c.deduct_pct}% deductible` : ''}</span>
             <span class="meta">${n} expense${n === 1 ? '' : 's'}</span>
             <button class="btn btn-quiet" data-editcat="${esc(c.id)}" type="button">Edit</button></div>`;
         }).join('')
@@ -408,6 +441,10 @@ export function initExpenses(ctx) {
     openSheet(isNew ? 'Add a category' : 'Edit category', `
       <div class="field"><label for="k-name">Name</label>
         <input class="input" id="k-name" value="${esc(c.name)}" maxlength="60" placeholder="e.g. Software & subscriptions"></div>
+      <div class="field"><label for="k-pct">Deductible</label>
+        <div class="inline-pick"><input class="input" type="number" id="k-pct" min="0" max="100" step="1"
+          value="${c.deduct_pct === undefined ? 100 : c.deduct_pct}"><span class="suffix">%</span></div>
+        <p class="field-hint">How much of this category the law lets you deduct. Meals are 50%; most things are 100%.</p></div>
       <div class="row-actions" style="margin-top:14px">
         <button class="btn btn-primary btn-block" id="k-save" type="button">${isNew ? 'Add category' : 'Save changes'}</button></div>
       ${isNew ? '' : `<div class="row-actions" style="margin-top:8px">
@@ -420,7 +457,8 @@ export function initExpenses(ctx) {
         if (cats().some((x) => x.id !== c.id && x.name.toLowerCase() === name.toLowerCase())) {
           return toast('There is already a category with that name', 'error');
         }
-        store.mutate([{ type: 'category', op: 'put', data: { ...c, name } }]);
+        const pct = Math.min(100, Math.max(0, Math.round(Number($('#k-pct', root).value) || 0)));
+        store.mutate([{ type: 'category', op: 'put', data: { ...c, name, deduct_pct: pct } }]);
         closeSheet();
         toast(isNew ? 'Category added' : 'Category saved');
       });
@@ -439,7 +477,9 @@ export function initExpenses(ctx) {
   $('#suggestCategoriesBtn').addEventListener('click', () => {
     if (cats().length) return;
     const now = Date.now();
-    store.mutate(SUGGESTED.map((name, i) => ({ type: 'category', op: 'put', data: { id: newId(), name, created_ms: now + i } })));
+    store.mutate(SUGGESTED.map(([name, pct], i) => ({
+      type: 'category', op: 'put', data: { id: newId(), name, deduct_pct: pct, created_ms: now + i },
+    })));
     toast(`Added ${SUGGESTED.length} categories — rename or delete any of them`);
   });
 

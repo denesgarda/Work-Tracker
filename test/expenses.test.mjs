@@ -88,12 +88,12 @@ ok('multi-file expenses are numbered, and use the business amount', names.includ
 ok('receipts live under the job folder', out.receipts.every((r) => r.path.startsWith(out.folder + '/receipts/')));
 const csv = out.files.find((f) => f.name.endsWith('/expenses.csv')).data.trim().split('\r\n');
 ok('expenses.csv: header plus one row per transaction', csv.length === 5 && csv[0].startsWith('Date,Vendor,Category'));
-ok('expenses.csv: split shows total, business use and percentage', csv.some((l) => l.includes('200.00,120.00,60%')), csv.join('\n'));
+ok('expenses.csv: split shows total, business use, deductible and percentage', csv.some((l) => l.includes('200.00,120.00,120.00,60%')), csv.join('\n'));
 ok('expenses.csv: hand-typed vendor cannot inject a formula', csv.some((l) => l.includes(",'=cmd,")));
 const byCat = out.files.find((f) => f.name.endsWith('/by-category.csv')).data.trim().split('\r\n');
-ok('by-category.csv ends with a correct total', byCat[byCat.length - 1] === 'Total,4,333.08,253.08', byCat[byCat.length - 1]);
+ok('by-category.csv ends with a correct total', byCat[byCat.length - 1] === 'Total,4,333.08,253.08,253.08', byCat[byCat.length - 1]);
 const summary = out.files.find((f) => f.name.endsWith('/summary.txt')).data;
-ok('summary flags the transaction with no receipt', summary.includes('MISSING RECEIPTS (1)') && summary.includes('=cmd'));
+ok('a missing receipt under $75 is not chased', summary.includes('Every transaction over $75 has a receipt.') && !summary.includes('MISSING RECEIPTS'));
 
 console.log('\n-- zip --');
 ok('crc32 matches the standard check value', crc32(new TextEncoder().encode('123456789')) === 0xcbf43926);
@@ -121,12 +121,12 @@ if (haveUnzip) {
 console.log('\n-- flags --');
 const fl = [
   E({ id: 'f1', at: at(2026, 2, 1), vendor: 'Uber', total: 2310, flagged: 1, flagNote: 'Needs review', atts: [{ key: 'exp/f1/a.jpg' }] }),
-  E({ id: 'f2', at: at(2026, 2, 2), vendor: 'Sephora', total: 4500, flagged: 1, flagNote: '=HYPERLINK("x")' }),
+  E({ id: 'f2', at: at(2026, 2, 2), vendor: 'Sephora', total: 9000, flagged: 1, flagNote: '=HYPERLINK("x")' }),
   E({ id: 'f3', at: at(2026, 2, 3), vendor: 'Adobe', total: 5499, atts: [{ key: 'exp/f3/a.jpg' }] }),
   E({ id: 'f4', at: at(2026, 2, 4), vendor: 'Target', total: 900, flagged: 1 }),
 ];
 ok('status filter: flagged only', ids(X.filterExpenses(fl, cats, { status: 'flagged' })) === 'f1,f2,f4');
-ok('status filter: missing a receipt', ids(X.filterExpenses(fl, cats, { status: 'noreceipt' })) === 'f2,f4');
+ok('status filter: missing a receipt, only above $75', ids(X.filterExpenses(fl, cats, { status: 'noreceipt' })) === 'f2');
 ok('flagged counted in the summary', X.summarizeExpenses(fl, cats).flagged === 3);
 const fx = X.buildExport({ expenses: fl, categories: cats, jobName: 'UGC', periodLabel: '2026' });
 const fcsv = fx.files.find((f) => f.name.endsWith('/expenses.csv')).data.trim().split('\r\n');
@@ -138,6 +138,72 @@ const fsum = fx.files.find((f) => f.name.endsWith('/summary.txt')).data;
 ok('summary lists every flagged transaction with its reason', fsum.includes('FLAGGED FOR REVIEW (3)') && fsum.includes('Needs review'));
 ok('a flag with no reason says so rather than printing nothing', fsum.includes('No reason given'));
 ok('flagged items come before the breakdowns', fsum.indexOf('FLAGGED FOR REVIEW') < fsum.indexOf('BY CATEGORY'));
+
+console.log('\n-- category deductible % --');
+const pcats = [{ id: 'c1', name: 'Software' }, { id: 'm', name: 'Meals', deduct_pct: 50 },
+               { id: 'z', name: 'Entertainment', deduct_pct: 0 }, { id: 'g', name: 'Gone', deduct_pct: 50, deleted: 1 }];
+ok('a category with no percentage set means 100%', X.categoryPct(pcats, 'c1') === 100);
+ok('a set percentage is used', X.categoryPct(pcats, 'm') === 50);
+ok('zero percent is respected, not treated as unset', X.categoryPct(pcats, 'z') === 0);
+ok('uncategorized is 100%', X.categoryPct(pcats, null) === 100);
+ok('a deleted category falls back to 100%', X.categoryPct(pcats, 'g') === 100);
+ok('an unknown category falls back to 100%', X.categoryPct(pcats, 'nope') === 100);
+
+const meal = E({ id: 'm1', cat: 'm', at: at(2026, 3, 1), total: 10000 });
+const halfMeal = E({ id: 'm2', cat: 'm', at: at(2026, 3, 2), total: 10000, biz: 6000 });
+ok('a fully-business meal is halved', X.deductibleCents(meal, pcats) === 5000);
+ok('business-use and the category limit compose', X.deductibleCents(halfMeal, pcats) === 3000);
+ok('a 100% category deducts the business-use amount', X.deductibleCents(E({ id: 'p', cat: 'c1', at: 0, total: 10000, biz: 6000 }), pcats) === 6000);
+ok('entertainment at 0% deducts nothing', X.deductibleCents(E({ id: 'z1', cat: 'z', at: 0, total: 10000 }), pcats) === 0);
+ok('odd cents round rather than truncate', X.deductibleCents(E({ id: 'r', cat: 'm', at: 0, total: 1501 }), pcats) === 751);
+ok('summary totals the deductible separately from business use', (() => {
+  const t = X.summarizeExpenses([meal, halfMeal], pcats);
+  return t.businessCents === 16000 && t.deductibleCents === 8000;
+})());
+
+console.log('\n-- needs attention --');
+const A = (o) => X.attentionOf(E(o));
+ok('a manual flag counts', A({ id: 'a', at: 0, total: 100, flagged: 1, note: 'n', atts: [{ key: 'k' }] }).join() === 'flagged');
+ok('no note counts', A({ id: 'a', at: 0, total: 100, atts: [{ key: 'k' }] }).join() === 'nonote');
+ok('whitespace is not a note', A({ id: 'a', at: 0, total: 100, note: '   ', atts: [{ key: 'k' }] }).includes('nonote'));
+ok('a missing receipt under $75 is ignored', !A({ id: 'a', at: 0, total: 7499, note: 'n' }).includes('noreceipt'));
+ok('a missing receipt at exactly $75 counts', A({ id: 'a', at: 0, total: 7500, note: 'n' }).includes('noreceipt'));
+ok('over $2,500 counts, and keeps counting once flagged',
+  A({ id: 'a', at: 0, total: 250000, note: 'n', atts: [{ key: 'k' }] }).join() === 'big' &&
+  A({ id: 'a', at: 0, total: 250000, note: 'n', flagged: 1, atts: [{ key: 'k' }] }).join() === 'flagged,big');
+ok('just under $2,500 does not', !A({ id: 'a', at: 0, total: 249999, note: 'n', atts: [{ key: 'k' }] }).includes('big'));
+ok('a tidy expense needs nothing', A({ id: 'a', at: 0, total: 5000, note: 'lunch with brand', atts: [{ key: 'k' }] }).length === 0);
+
+const att = [
+  E({ id: 't1', at: at(2026, 1, 1), total: 300000, note: 'camera', atts: [{ key: 'k' }] }),
+  E({ id: 't2', at: at(2026, 1, 2), total: 9000, note: 'tripod' }),
+  E({ id: 't3', at: at(2026, 1, 3), total: 1000, atts: [{ key: 'k' }], flagged: 1, flagNote: 'check' }),
+  E({ id: 't4', at: at(2026, 1, 4), total: 2000, note: 'coffee', atts: [{ key: 'k' }] }),
+];
+const counts = X.attentionCounts(att);
+ok('counts add up per kind', counts.flagged === 1 && counts.noreceipt === 1 && counts.nonote === 1 && counts.big === 1, JSON.stringify(counts));
+for (const [key, want] of [['flagged', 't3'], ['noreceipt', 't2'], ['nonote', 't3'], ['big', 't1']]) {
+  ok(`filter by ${key}`, ids(X.filterExpenses(att, pcats, { status: key })) === want);
+}
+
+console.log('\n-- export with limits --');
+const lim = [
+  E({ id: 'L1', cat: 'm', at: at(2026, 4, 1), vendor: 'Sweetgreen', total: 10000, note: 'lunch with brand', atts: [{ key: 'exp/L1/a.jpg' }] }),
+  E({ id: 'L2', cat: 'c1', at: at(2026, 4, 2), vendor: 'B&H', total: 300000, note: 'camera body', atts: [{ key: 'exp/L2/a.jpg' }] }),
+  E({ id: 'L3', cat: 'c1', at: at(2026, 4, 3), vendor: 'Amazon', total: 9000, note: 'cables' }),
+];
+const lx = X.buildExport({ expenses: lim, categories: pcats, jobName: 'UGC', periodLabel: '2026' });
+const lcsv = lx.files.find((f) => f.name.endsWith('/expenses.csv')).data.trim().split('\r\n');
+ok('CSV has a Deductible column after Business use', lcsv[0].includes('Total paid,Business use,Deductible,Business %'));
+ok('the meal is halved in the CSV', lcsv.some((l) => l.startsWith('2026-04-01') && l.includes('100.00,100.00,50.00,')), lcsv.join('\n'));
+ok('a 100% category is not reduced', lcsv.some((l) => l.startsWith('2026-04-03') && l.includes('90.00,90.00,90.00,')));
+const lsum = lx.files.find((f) => f.name.endsWith('/summary.txt')).data;
+ok('summary leads with the deductible figure', /Deductible\s+\$3,140\.00/.test(lsum), lsum.split('\r\n').slice(0, 8).join(' | '));
+ok('summary explains where a limit was applied', lsum.includes('CATEGORY LIMITS APPLIED') && lsum.includes('$100.00 business use → $50.00 deductible'));
+ok('summary calls out the purchase over $2,500', lsum.includes('OVER $2,500') && lsum.includes('B&H'));
+ok('summary chases only the missing receipt over $75', lsum.includes('MISSING RECEIPTS OVER $75 (1)') && lsum.includes('Amazon'));
+const lcat = lx.files.find((f) => f.name.endsWith('/by-category.csv')).data.trim().split('\r\n');
+ok('by-category carries both figures', lcat[0].endsWith('Business use,Deductible') && lcat[lcat.length - 1] === 'Total,3,3190.00,3190.00,3140.00', lcat[lcat.length - 1]);
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

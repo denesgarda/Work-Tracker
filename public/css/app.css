@@ -658,7 +658,28 @@ button.tile:active { filter: brightness(1.12); }
   .toolbar > .seg { flex-basis: 100%; }
 }
 
-/* Flagged expenses: the bar turns to the warning colour and the second line
-   leads with a labelled flag, so the state never relies on colour alone. */
-.entry.expense.is-flagged .bar { background: var(--warn); }
+/* Anything needing attention: the bar turns to the warning colour and the
+   second line leads with a label, so the state never relies on colour alone. */
+.entry.expense.is-attention .bar { background: var(--warn); }
 .entry .flag { color: #e79878; font-weight: 550; }
+
+/* ── needs-attention chips ──────────────────────────────────────── */
+
+.attention .chips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; }
+@media (min-width: 620px) { .attention .chips { grid-template-columns: repeat(4, 1fr); } }
+
+.attention .chip {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 11px 12px; text-align: left; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  color: var(--text); font-family: var(--sans);
+}
+.attention .chip .n { font-family: var(--mono); font-size: 19px; font-variant-numeric: tabular-nums; }
+.attention .chip .l { font-size: 12px; color: var(--muted); }
+.attention .chip:disabled { cursor: default; opacity: .45; }
+.attention .chip:not(:disabled) .n { color: var(--pause); }
+.attention .chip.is-active { border-color: var(--pause); background: rgba(201, 122, 61, .12); }
+.attention .chip.is-active .l { color: var(--text); }
+
+.field-hint.warnish { color: var(--pause); }
+.inline-pick .suffix { align-self: center; color: var(--muted); font-size: 14px; }

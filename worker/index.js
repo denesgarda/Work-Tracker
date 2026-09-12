@@ -195,11 +195,15 @@ function buildStatements(db, ops, rev) {
       out.push(
         db
           .prepare(
-            `INSERT INTO categories (id, name, created_ms, rev, deleted)
-             VALUES (?1, ?2, ?3, ?4, 0)
-             ON CONFLICT(id) DO UPDATE SET name = ?2, rev = ?4, deleted = 0`,
+            `INSERT INTO categories (id, name, deduct_pct, created_ms, rev, deleted)
+             VALUES (?1, ?2, ?5, ?3, ?4, 0)
+             ON CONFLICT(id) DO UPDATE SET name = ?2, deduct_pct = ?5, rev = ?4, deleted = 0`,
           )
-          .bind(rowId, str(d.name, 60) || 'Untitled', int(d.created_ms) || Date.now(), rev),
+          .bind(
+            rowId, str(d.name, 60) || 'Untitled', int(d.created_ms) || Date.now(), rev,
+            // A percentage outside 0–100 is meaningless; clamp rather than reject.
+            Math.min(100, Math.max(0, d.deduct_pct === undefined ? 100 : int(d.deduct_pct))),
+          ),
       );
     } else if (kind === 'expense') {
       const jobId = id(d.job_id);
