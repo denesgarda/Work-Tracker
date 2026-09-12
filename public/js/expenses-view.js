@@ -140,14 +140,17 @@ export function initExpenses(ctx) {
     const c = store.category(e.category_id);
     const n = (e.attachments || []).length;
     const att = X.attentionOf(e);
-    const bits = [esc(c ? c.name : X.UNCATEGORIZED), esc(shortDate(e.spent_ms))];
-    // Whatever needs attention leads the line — it's why you came back to it.
-    if (X.isFlagged(e)) bits.unshift(`<span class="flag">Flagged${e.flag_note ? ': ' + esc(e.flag_note) : ''}</span>`);
-    if (att.includes('big')) bits.unshift('<span class="flag">Over $2,500</span>');
-    if (att.includes('nonote')) bits.unshift('<span class="nr">No note</span>');
+    // Everything needing attention leads the line, in one fixed order, before
+    // what the expense actually was.
+    const warn = [];
+    if (att.includes('nonote')) warn.push('<span class="nr">No note</span>');
+    if (att.includes('noreceipt')) warn.push('<span class="nr">No receipt</span>');
+    if (X.isFlagged(e)) warn.push(`<span class="flag">Flagged${e.flag_note ? ': ' + esc(e.flag_note) : ''}</span>`);
+    if (att.includes('big')) warn.push('<span class="flag">Over $2,500</span>');
+
+    const bits = [...warn, esc(c ? c.name : X.UNCATEGORIZED), esc(shortDate(e.spent_ms))];
     if (!st.job) bits.push(esc(store.job(e.job_id)?.name ?? 'Unknown job'));
-    if (att.includes('noreceipt')) bits.push('<span class="nr">No receipt</span>');
-    else if (n) bits.push(`${n} file${n === 1 ? '' : 's'}`);
+    if (n) bits.push(`${n} file${n === 1 ? '' : 's'}`);
     return `<button class="entry expense${att.length ? ' is-attention' : ''}" data-exp="${esc(e.id)}" type="button">
       <span class="bar"></span>
       <span class="main"><span class="t1">${esc(X.vendorName(e))}</span><span class="t2">${bits.join(' · ')}</span></span>
@@ -265,7 +268,7 @@ export function initExpenses(ctx) {
           `<button class="btn btn-quiet" data-bizpct="${p}" type="button">${p}%</button>`).join('')}</div></div>
       <p class="field-hint" id="x-hint"></p>
       <p class="field-hint warnish" id="x-big" hidden>Over $2,500 — this may have to be spread over several
-        years rather than deducted at once. Worth flagging for your accountant.</p>
+        years rather than deducted at once.</p>
       <div class="field"><label>Receipts and statements</label>
         <div class="attach-grid" id="x-atts"></div>
         <label class="btn btn-quiet attach-add">Add a photo or PDF
